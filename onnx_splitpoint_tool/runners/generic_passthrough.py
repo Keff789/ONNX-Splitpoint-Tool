@@ -14,6 +14,79 @@ SCHEMA = "onnx-splitpoint/generic-canonical-full-input/v1"
 _LEGACY_STALE_MAP_RUNNER = "1eda22010758b22dc804ffaf9f2398c30a08a770c2865b2481ef4d6106c8800e"
 
 
+def _validate_canonical_cut_transfer(row, proof, observed, outputs, inputs, cut):
+    if all(outputs[source] == inputs[target] for target, source in cut.items()):
+        return
+    # SourceQuality observes P1 before the ordinary transfer and P2 after it.
+    # Native H10 UINT8 outputs are dequantized there by their own HEF QuantInfo;
+    # these are two actual typed observations, not interchangeable contracts.
+    io = observed.get("part1_io") or {}
+    transfer = observed.get("transfer_contract") or {}
+    artifacts = proof.get("runtime_artifacts") or {}
+    bound = row.get("generic_artifact_binding") or {}
+    hef = artifacts.get("part1_runtime") or {}
+    names, aliases = io.get("hef_outputs"), io.get("output_aliases")
+    canonical = io.get("canonical_outputs")
+    formats, quant = io.get("runtime_output_formats"), io.get("runtime_output_quantization")
+    if (transfer.get("boundary_mode") != "canonical_float32"
+            or transfer.get("hailo_exact_dequantization") is not True
+            or (proof.get("identity") or {}).get("comparison_backend") != "hailo10h"
+            or (row.get("identity") or {}).get("comparison_backend") != "hailo10h"
+            or type(io.get("schema_version")) is not int or io["schema_version"] != 3
+            or io.get("backend") != "hailo"
+            or io.get("runtime_api") != "infer_model"
+            or io.get("quantized_outputs") is not True or io.get("outputs_dequantized") is not False
+            or io.get("runtime_output_format") != "uint8"
+            or not isinstance(names, list) or not names
+            or any(not isinstance(name, str) or not name for name in names)
+            or len(names) != len(set(names))
+            or not isinstance(canonical, list)
+            or any(not isinstance(name, str) or not name for name in canonical)
+            or len(canonical) != len(set(canonical))
+            or set(canonical) != set(outputs) or len(names) != len(canonical)
+            or not isinstance(aliases, Mapping) or set(aliases) != set(names)
+            or set(aliases.values()) != set(canonical)
+            or aliases != dict(zip(names, canonical))
+            or not isinstance(formats, Mapping) or set(formats) != set(names)
+            or any(value != "UINT8" for value in formats.values())
+            or not isinstance(quant, Mapping) or set(quant) != set(names)
+            or io.get("onnx_output_shapes") != {name: value.get("shape") for name, value in outputs.items()}
+            or bound.get("artifacts") != artifacts
+            or bound.get("producer_source") != (row.get("quality_reference") or {}).get("request")
+            or not bound.get("producer_source") or io.get("artifact") != hef.get("path")
+            or re.fullmatch(r"[a-f0-9]{64}", str(hef.get("sha256"))) is None
+            or type(hef.get("size_bytes")) is not int or hef["size_bytes"] <= 0
+            or not artifacts.get("part1_build_receipt")):
+        raise ValueError("Canonical original-input exact HEF transfer proof differs")
+    receipt = artifacts["part1_build_receipt"]
+    if (not isinstance(receipt, Mapping) or not receipt.get("path")
+            or re.fullmatch(r"[a-f0-9]{64}", str(receipt.get("sha256"))) is None
+            or type(receipt.get("size_bytes")) is not int or receipt["size_bytes"] <= 0):
+        raise ValueError("Canonical original-input exact HEF receipt binding differs")
+    for target, source in cut.items():
+        raw, canonical_spec = outputs[source], inputs[target]
+        shape = raw.get("shape")
+        if (set(raw) != {"shape", "dtype"} or set(canonical_spec) != {"shape", "dtype"}
+                or raw.get("dtype") != "uint8" or canonical_spec.get("dtype") != "float32"
+                or not isinstance(shape, list) or not shape
+                or any(type(dim) is not int or dim <= 0 for dim in shape)
+                or shape != canonical_spec.get("shape")):
+            raise ValueError("Canonical original-input exact HEF transfer shape/dtype differs")
+    for value in quant.values():
+        if (not isinstance(value, Mapping) or set(value) != {"scale", "zero_point"}
+                or any(type(value[key]) not in (int, float) or not math.isfinite(value[key])
+                       for key in ("scale", "zero_point")) or value["scale"] <= 0):
+            raise ValueError("Canonical original-input exact HEF QuantInfo differs")
+    # The caller admits the complete original SourceQuality closure. Rejoin its
+    # dequantizer to this unchanged implementation, rather than trusting a flag.
+    backend = Path(__file__).parent / "backends" / "hailo_backend.py"
+    sources = [item for item in proof.get("runtime_source_files", [])
+               if str(item.get("path", "")).endswith("/splitpoint_runners/backends/hailo_backend.py")]
+    if (len(sources) != 1 or sources[0].get("sha256") != _sha(backend)
+            or sources[0].get("size_bytes") != backend.stat().st_size):
+        raise ValueError("Canonical original-input exact HEF dequantizer source differs")
+
+
 def prepare_canonical_row(row, proof, *, split_manifest):
     """Project a verified producer's original inputs without rewriting its report.
 
@@ -55,9 +128,9 @@ def prepare_canonical_row(row, proof, *, split_manifest):
             or original.get("passthrough_inputs") != observed.get("passthrough_inputs")
             or original.get("transfer_contract") != transfer
             or transfer.get("part1_cut_names") != p1 or transfer.get("part2_cut_names") != p2
-            or transfer.get("manifest_cut_name_map_p2_to_p1") != cut
-            or any(outputs[source] != inputs[target] for target, source in cut.items())):
+            or transfer.get("manifest_cut_name_map_p2_to_p1") != cut):
         raise ValueError("Canonical original-input observed manifest/typed boundary differs")
+    _validate_canonical_cut_transfer(row, proof, observed, outputs, inputs, cut)
     desired = {**original, "part2_to_part1": cut, "passthrough_inputs": pass_map}
     if original == desired:
         if projection is not None:

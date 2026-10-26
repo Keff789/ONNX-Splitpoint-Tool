@@ -1,0 +1,650 @@
+{
+  "proof": {
+    "identity": {
+      "case_id": "b236",
+      "comparison_backend": "hailo10h",
+      "model_id": "yolov7_paper",
+      "precision": "float32_layout_fp16",
+      "setup_id": "orin_nx_hailo10_01"
+    },
+    "image_count": 5000,
+    "implementation_runner": {
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/b236/run_split_onnxruntime.py",
+      "sha256": "1eda22010758b22dc804ffaf9f2398c30a08a770c2865b2481ef4d6106c8800e",
+      "size_bytes": 1131176
+    },
+    "runtime_artifacts": {
+      "boundary_metadata": {
+        "local_path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/next_h10_yolov7_b236_sourcea814_selected_sidecar_import_local_v1/bound_assets/b236/boundary_metadata/split_manifest.json",
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/boundary_metadata/split_manifest.json",
+        "sha256": "b21cfb4ceb8f65370a79232792f0412251d9f6274d0d0c82abb1cc9b9c7436ee",
+        "size_bytes": 53206
+      },
+      "build_part2_onnx": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/source.onnx",
+        "sha256": "2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e",
+        "size_bytes": 65377138
+      },
+      "engine": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/part2_fp16.engine",
+        "sha256": "2daf6577310caf09b02d9e0b2a7579a358cbc8edc83f1ba09246e397f2c74107",
+        "size_bytes": 34701516
+      },
+      "engine_build_receipt": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/engine_build_receipt.json",
+        "sha256": "3c71740c786bf35df818f5aa32c9374a025485b0d8c698b0c4ec2980c186a4a9",
+        "size_bytes": 1755
+      },
+      "part1_build_receipt": {
+        "local_path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/871616820ad70a5169840aea067ef409f53664c35688d15232745ff1640d539b/.hailo-generations/68851df6b39b4e8e84401e3376b2ce28/hailo_hef_build_receipt.json",
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/part1_build_receipt/hailo_hef_build_receipt.json",
+        "sha256": "084d41bec358f71ad3202b170429356c5abc8db851e8170cd8c0e9424be28586",
+        "size_bytes": 9182
+      },
+      "part1_runtime": {
+        "local_path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/871616820ad70a5169840aea067ef409f53664c35688d15232745ff1640d539b/.hailo-generations/68851df6b39b4e8e84401e3376b2ce28/compiled.hef",
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/part1_runtime/compiled.hef",
+        "sha256": "840b8cf05b39b98d23ff7564749d592f8e7994e74617c3654bcc29282f59563c",
+        "size_bytes": 19144704
+      },
+      "source_part1_onnx": {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/b236/yolov7_paper_part1_b236.onnx",
+        "sha256": "7381e73fcc97a7b11478d9641f978186978965868a646f0d72c1719f474cebca",
+        "size_bytes": 93197165
+      },
+      "source_part2_onnx": {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/b236/yolov7_paper_part2_b236.onnx",
+        "sha256": "2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e",
+        "size_bytes": 65377138
+      }
+    },
+    "runtime_context": {
+      "boundary_observation_count": 5000,
+      "boundary_runtime": {
+        "part1_io": {
+          "artifact": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/part1_runtime/compiled.hef",
+          "backend": "hailo",
+          "canonical_inputs": [
+            "images"
+          ],
+          "canonical_outputs": [
+            "mul_47",
+            "mul_56",
+            "mul_66",
+            "mul_68"
+          ],
+          "copy_outputs": true,
+          "hef_inputs": [
+            "yolov7_paper_part1_b236/input_layer1"
+          ],
+          "hef_outputs": [
+            "yolov7_paper_part1_b236/conv50",
+            "yolov7_paper_part1_b236/conv58",
+            "yolov7_paper_part1_b236/conv69",
+            "yolov7_paper_part1_b236/conv68"
+          ],
+          "hotloop": true,
+          "input_aliases": {
+            "yolov7_paper_part1_b236/input_layer1": "images"
+          },
+          "onnx_input_shapes": {
+            "images": [
+              1,
+              3,
+              640,
+              640
+            ]
+          },
+          "onnx_output_shapes": {
+            "mul_47": [
+              1,
+              512,
+              20,
+              20
+            ],
+            "mul_56": [
+              1,
+              256,
+              40,
+              40
+            ],
+            "mul_66": [
+              1,
+              128,
+              40,
+              40
+            ],
+            "mul_68": [
+              1,
+              128,
+              40,
+              40
+            ]
+          },
+          "output_aliases": {
+            "yolov7_paper_part1_b236/conv50": "mul_47",
+            "yolov7_paper_part1_b236/conv58": "mul_56",
+            "yolov7_paper_part1_b236/conv68": "mul_68",
+            "yolov7_paper_part1_b236/conv69": "mul_66"
+          },
+          "outputs_dequantized": false,
+          "persistent_activation": false,
+          "quantized_inputs": true,
+          "quantized_outputs": true,
+          "runtime_api": "infer_model",
+          "runtime_input_format": "uint8",
+          "runtime_input_formats": {
+            "yolov7_paper_part1_b236/input_layer1": "UINT8"
+          },
+          "runtime_input_quantization": {
+            "yolov7_paper_part1_b236/input_layer1": {
+              "scale": 0.003921568859368563,
+              "zero_point": 0.0
+            }
+          },
+          "runtime_input_shapes": {
+            "images": [
+              640,
+              640,
+              3
+            ]
+          },
+          "runtime_output_format": "uint8",
+          "runtime_output_formats": {
+            "yolov7_paper_part1_b236/conv50": "UINT8",
+            "yolov7_paper_part1_b236/conv58": "UINT8",
+            "yolov7_paper_part1_b236/conv68": "UINT8",
+            "yolov7_paper_part1_b236/conv69": "UINT8"
+          },
+          "runtime_output_quantization": {
+            "yolov7_paper_part1_b236/conv50": {
+              "scale": 0.05095566436648369,
+              "zero_point": 6.0
+            },
+            "yolov7_paper_part1_b236/conv58": {
+              "scale": 0.069682776927948,
+              "zero_point": 5.0
+            },
+            "yolov7_paper_part1_b236/conv68": {
+              "scale": 0.0647583082318306,
+              "zero_point": 5.0
+            },
+            "yolov7_paper_part1_b236/conv69": {
+              "scale": 0.03577226772904396,
+              "zero_point": 8.0
+            }
+          },
+          "runtime_output_shapes": {
+            "mul_47": [
+              20,
+              20,
+              512
+            ],
+            "mul_56": [
+              40,
+              40,
+              256
+            ],
+            "mul_66": [
+              40,
+              40,
+              128
+            ],
+            "mul_68": [
+              40,
+              40,
+              128
+            ]
+          },
+          "schema_version": 3
+        },
+        "part2_io": {
+          "artifact": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/part2_fp16.engine",
+          "backend": "native_tensorrt",
+          "build_info": {
+            "artifact_binding_status": "verified_exact_native_tensorrt_engine_receipt",
+            "build_disabled": true,
+            "cache_hit": true,
+            "cache_miss_reason": "",
+            "cache_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-5a18ec9945c3960d/splits/b236",
+            "canonical_role_layout": true,
+            "cuda_binding": "ctypes-libcudart",
+            "cuda_python_import_error": "ModuleNotFoundError: No module named 'cuda'",
+            "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/part2_fp16.engine",
+            "engine_build_receipt_file_sha256": "3c71740c786bf35df818f5aa32c9374a025485b0d8c698b0c4ec2980c186a4a9",
+            "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/engine_build_receipt.json",
+            "engine_build_receipt_sha256": "11b7cb1b4fec8dc14d289b90309d3a4afe32f766c04d549c912ac69b44d0d5a1",
+            "engine_sha256": "2daf6577310caf09b02d9e0b2a7579a358cbc8edc83f1ba09246e397f2c74107",
+            "explicit_engine": true,
+            "fallback_disabled": true,
+            "model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/source.onnx",
+            "precision": "fp16",
+            "requested_precision": "fp16",
+            "runtime": "native_tensorrt",
+            "source_model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/source.onnx",
+            "source_model_sha256": "2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e",
+            "trtexec": "/usr/src/tensorrt/bin/trtexec",
+            "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4"
+          },
+          "input_names": [
+            "images",
+            "mul_47",
+            "mul_56",
+            "mul_66",
+            "mul_68"
+          ],
+          "inputs": {
+            "images": {
+              "dtype": "float32",
+              "shape": [
+                1,
+                3,
+                640,
+                640
+              ]
+            },
+            "mul_47": {
+              "dtype": "float32",
+              "shape": [
+                1,
+                512,
+                20,
+                20
+              ]
+            },
+            "mul_56": {
+              "dtype": "float32",
+              "shape": [
+                1,
+                256,
+                40,
+                40
+              ]
+            },
+            "mul_66": {
+              "dtype": "float32",
+              "shape": [
+                1,
+                128,
+                40,
+                40
+              ]
+            },
+            "mul_68": {
+              "dtype": "float32",
+              "shape": [
+                1,
+                128,
+                40,
+                40
+              ]
+            }
+          },
+          "output_names": [
+            "output",
+            "clone_1",
+            "clone_2"
+          ],
+          "outputs": {
+            "clone_1": {
+              "dtype": "float32",
+              "shape": [
+                1,
+                3,
+                40,
+                40,
+                85
+              ]
+            },
+            "clone_2": {
+              "dtype": "float32",
+              "shape": [
+                1,
+                3,
+                20,
+                20,
+                85
+              ]
+            },
+            "output": {
+              "dtype": "float32",
+              "shape": [
+                1,
+                3,
+                80,
+                80,
+                85
+              ]
+            }
+          },
+          "precision": "fp16",
+          "schema_version": 2
+        },
+        "part2_to_part1": {
+          "images": "mul_47",
+          "mul_47": "mul_47",
+          "mul_56": "mul_56",
+          "mul_66": "mul_66",
+          "mul_68": "mul_68"
+        },
+        "passthrough_inputs": {},
+        "transfer_contract": {
+          "boundary_mode": "canonical_float32",
+          "hailo_exact_dequantization": true,
+          "manifest_cut_name_map_p2_to_p1": {
+            "mul_47": "mul_47",
+            "mul_56": "mul_56",
+            "mul_66": "mul_66",
+            "mul_68": "mul_68"
+          },
+          "part1_cut_names": [
+            "mul_47",
+            "mul_56",
+            "mul_66",
+            "mul_68"
+          ],
+          "part2_cut_names": [
+            "mul_47",
+            "mul_56",
+            "mul_66",
+            "mul_68"
+          ]
+        }
+      },
+      "environment": {
+        "environment": {
+          "PATH": "/home/nx/venvs/hailo10/bin:/home/nx/.local/bin:/home/nx/.local/bin:/home/nx/.local/bin:/home/nx/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+          "SPLITPOINT_EXTRA_SITES": "/home/nx/venvs/hailo10/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages:/home/nx/.local/lib/python3.10/site-packages:/home/nx/venvs/hailo10/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages:/home/nx/.local/lib/python3.10/site-packages"
+        },
+        "executable": "/home/nx/venvs/hailo10/bin/python3",
+        "executable_resolved": "/usr/bin/python3.10",
+        "executable_sha256": "e6bd3bd6d16c69ffda0d87aac09a2ed202119004805568b3d1b9b2b47763ca26",
+        "python_version": "3.10.12 (main, Aug 15 2025, 14:32:43) [GCC 11.4.0]"
+      },
+      "logical_boundary": {
+        "part1_outputs": {
+          "mul_47": {
+            "dtype": "uint8",
+            "shape": [
+              1,
+              512,
+              20,
+              20
+            ]
+          },
+          "mul_56": {
+            "dtype": "uint8",
+            "shape": [
+              1,
+              256,
+              40,
+              40
+            ]
+          },
+          "mul_66": {
+            "dtype": "uint8",
+            "shape": [
+              1,
+              128,
+              40,
+              40
+            ]
+          },
+          "mul_68": {
+            "dtype": "uint8",
+            "shape": [
+              1,
+              128,
+              40,
+              40
+            ]
+          }
+        },
+        "part2_inputs": {
+          "images": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          },
+          "mul_47": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              512,
+              20,
+              20
+            ]
+          },
+          "mul_56": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              256,
+              40,
+              40
+            ]
+          },
+          "mul_66": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              128,
+              40,
+              40
+            ]
+          },
+          "mul_68": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              128,
+              40,
+              40
+            ]
+          }
+        }
+      },
+      "schema": "onnx-splitpoint/generic-quality-runtime-context",
+      "schema_version": 1
+    },
+    "runtime_source_files": [
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/b236/run_split_onnxruntime.py",
+        "sha256": "1eda22010758b22dc804ffaf9f2398c30a08a770c2865b2481ef4d6106c8800e",
+        "size_bytes": 1131176
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/__init__.py",
+        "sha256": "470cbbd32fdcf5324896bb072fff2f7a413ca6a50af6d03a36c7a6603aa87066",
+        "size_bytes": 1355
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/_types.py",
+        "sha256": "50251a53b4de0c3bb5ac4e28bba7101691a88b412fe8703c51b47f050af87232",
+        "size_bytes": 2733
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/artifacts.py",
+        "sha256": "57ec7aee2bd8e6d94f2fc7e5b2c7f2663ea82435219d64320007ef90fc970ce5",
+        "size_bytes": 652
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/backends/__init__.py",
+        "sha256": "43fd76f0f2048a270920b27535de86deff4af91301c0df41fe064471b0a3ab65",
+        "size_bytes": 343
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/backends/base.py",
+        "sha256": "9528ee48a9daa4e503f537efd92d8611785d1c76182a182f5ef48a5091471d95",
+        "size_bytes": 954
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/backends/hailo_backend.py",
+        "sha256": "4d7d9fbc974953ce680f6c75bb7b19ed22115a0e4e56cf356f1c2f551ea7e472",
+        "size_bytes": 107589
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/backends/hailo_utils.py",
+        "sha256": "5c2540b77a9db1da89a45614adc6fed1ae5e239de6200b44162332f12166d319",
+        "size_bytes": 6601
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/backends/ort_backend.py",
+        "sha256": "bc2e0cff589616508013cc8a7a5915882a95e8e5400471cce94cecc32f3713be",
+        "size_bytes": 3889
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_async.py",
+        "sha256": "371206dbac1ed1f59fee940d421a786faf06da86b57d38a11f41491e3a7277c1",
+        "size_bytes": 12682
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_energy.py",
+        "sha256": "cca625417615bd5723d963b97e85444115ab477733373046d9c34be26b32d21f",
+        "size_bytes": 17134
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_mixed_control.py",
+        "sha256": "cab425c90bc32894537e1c3c03d39a6fb13444f453f99efe0f19c472463f02b0",
+        "size_bytes": 38911
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_mixed_control_binding.py",
+        "sha256": "107cc031243a76f19cba0442d56ae4db2a1a30bbf1ed78d89f8f94d02595aacc",
+        "size_bytes": 40863
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_only.py",
+        "sha256": "b3ee77bcd13fb780cef7b8fb5f772582958d4cc0dfcc481961a70f8a25e3fc86",
+        "size_bytes": 18129
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_passthrough.py",
+        "sha256": "2043d7f3a402c06310b90128cab4d84b02ab9478e27d4b4b7c5a4f5c4511a5e4",
+        "size_bytes": 8701
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_quality_accounting.py",
+        "sha256": "38c049b903ec63a2a3a3a63b923e7a7446f9a97beff6ffaafe644d5a05bd6121",
+        "size_bytes": 25923
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_quality_completion.py",
+        "sha256": "c49b9f7eda029fbff7c286203e175cb7583e752013d82a4ef90bf40d2f87ceba",
+        "size_bytes": 66614
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/generic_quality_endpoint.py",
+        "sha256": "152320f85b0188c031eba2ad7602fcfcd2b4c202b406b859ae62370fd600fc01",
+        "size_bytes": 6155
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/graph_runner.py",
+        "sha256": "c032de30403135c37b0813c5a48489d888a1ffade72fc20f8d6cdd329fc12012",
+        "size_bytes": 11773
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/harness/__init__.py",
+        "sha256": "37ba36a48e4f620bb6541a94df2dd856b4730ebd2ce5aa5641caf16c058d29d2",
+        "size_bytes": 184
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/harness/base.py",
+        "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c",
+        "size_bytes": 4631
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/harness/classification.py",
+        "sha256": "7b523df592b8a0338b1396c105e2a380aef587010c4db7fe0dc5ee368b434758",
+        "size_bytes": 18505
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/harness/yolo.py",
+        "sha256": "ef63cbc2ce549fcde0926456d5a0269c583aef29ba7f031980e0241f00ca5965",
+        "size_bytes": 87397
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/interface_transfer.py",
+        "sha256": "fcdc990edc2727e5dd9f789b43c45be40a93f264f8d994969b25e6de34d65e40",
+        "size_bytes": 2195
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_command_contract.py",
+        "sha256": "b9761162f979efd3931797b2b33e31f3fc219de11484ef43aafadfe1eb1a4744",
+        "size_bytes": 85399
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_deepx_async.py",
+        "sha256": "4c2ade64af9d63291ba8869899718e5d8e433218a5a2fffd1f194475c8177029",
+        "size_bytes": 31908
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_detection_postprocess.py",
+        "sha256": "8c202f4237ec39316a54dda7ea8f71dd19bae4bb02e3311bbd8fed7be43214b8",
+        "size_bytes": 228471
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_full_input.py",
+        "sha256": "33394c0e1dbba2b852239cb0a9a81a82fa658ed14e6c1a85ded06ce9c33b3b5e",
+        "size_bytes": 20840
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_output_endpoint.py",
+        "sha256": "0667f3368b684ed5df2b801b8283a725d072722115a91f9cff2c3801a3396139",
+        "size_bytes": 56063
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_split_quality.py",
+        "sha256": "4df006a9d50b675ec955bc518510ffcd7200ba9c675ecbc5a723fe1570b51af4",
+        "size_bytes": 102918
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_split_quality_runtime.py",
+        "sha256": "0e97f0640686a227519920eb51952413d35ab5c2cd8deca5d30809d235249264",
+        "size_bytes": 82503
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_three_stage.py",
+        "sha256": "22657a4b26d12ce3962862537ca7f994ebb7324259b5e25d983344277ab0a129",
+        "size_bytes": 38155
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/native_trt_from_benchmarkset.py",
+        "sha256": "13a135734aa155b6e169d891d4f99de4fb90b5b5ef4b886b75e0a80772d7e9b8",
+        "size_bytes": 87785
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/preprocessing_contract.py",
+        "sha256": "9d8faf47e2291a7fe57829c40c16b97a3719c1ba73091b4d4f60e91272516ffe",
+        "size_bytes": 21563
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/request_latency.py",
+        "sha256": "24635235ac27b4e1afb5fa232fcdb92a37a02aa54c280dbfc8e5523d44c1c89a",
+        "size_bytes": 12549
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/runners/__init__.py",
+        "sha256": "ad46f3b3cbd2c43f56c1016fb0be52ce345474b2ba6b51f3b2d8766d4e16020e",
+        "size_bytes": 247
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/splitpoint_runners/task_completion.py",
+        "sha256": "f8fcf6d53bfbf3024f2232d0e0c47d3b9bc7a9ae4c808dc5fb40bab50f105c30",
+        "size_bytes": 34585
+      }
+    ]
+  },
+  "provenance": {
+    "projection_only": true,
+    "request": {
+      "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/local_quality_runs/yolov7_H10_b236_sourcea814_selective_local_import_full20_local_v1/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947/models/yolov7_paper/benchmark_results/quality_inputs/orin_nx_hailo10_01/results/b236/results_hailo10_to_tensorrt/task_quality_inputs/composed_request.json",
+      "sha256": "8f1d0b0145b90d543491c6881bb9b91f13ab6e3806b4485e1f15a3d9a597ef85",
+      "size_bytes": 132222608
+    }
+  }
+}
