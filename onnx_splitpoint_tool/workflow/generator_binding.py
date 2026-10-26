@@ -60,6 +60,7 @@ def _read_json(path: Path, default: Any = None) -> Any:
 
 def _register_imported_generic_hailo_hint(
     suite: Path, case: str, destination: Path, runs: List[Mapping[str, Any]],
+    *, backend: str,
 ) -> None:
     """Project the verified current artifact through ordinary availability."""
     from ..benchmark.services import (
@@ -79,11 +80,12 @@ def _register_imported_generic_hailo_hint(
     hefs = hailo.setdefault("hefs", {})
     if not isinstance(hefs, dict) or any(not isinstance(meta, dict) for meta in hefs.values()):
         raise ValueError("generic_quality_hailo_import_hint_current_manifest_invalid")
-    if any(hailo_scope_backend(arch) == "hailo10"
+    if any(hailo_scope_backend(arch) == backend
            and any(str(key).startswith("part1") for key in meta)
            for arch, meta in hefs.items()):
         raise ValueError("generic_quality_hailo_import_hint_current_locator_conflict")
-    hefs.setdefault("hailo10h", {}).update(
+    arch = "hailo10h" if backend == "hailo10" else "hailo8"
+    hefs.setdefault(arch, {}).update(
         part1=relpath(destination, manifest_path.parent),
         part1_original_reuse={
             "receipt": relpath(destination.with_name("hailo_hef_build_receipt.json"), manifest_path.parent),
@@ -123,15 +125,17 @@ def _materialize_imported_generic_hailo_hints(
     profile: Mapping[str, Any], runs: List[Mapping[str, Any]],
     skip_requests: set[tuple[str, str, str]] | None = None,
 ) -> List[Dict[str, Any]]:
-    """Expose an original, verified H10 HEF to ordinary import preflight.
+    """Expose an original, verified Hailo HEF to ordinary import preflight.
 
-    An imported H8 suite has no H10 deferred call to rebind. Only an explicit
-    current Generic config can supply that missing artifact; its original
+    An imported suite may lack the selected backend's deferred call. Only an
+    explicit current Generic config can supply that missing artifact; its original
     receipt is copied unchanged, never projected into a successful build call.
     """
     from ..artifact_store import materialize_file
     from ..build_dispatch_policy import require_productive_force_off
-    from ..hailo_backend import _hailo_receipt_path, _load_valid_hailo_receipt
+    from ..hailo_backend import (
+        _hailo_receipt_path, _load_valid_hailo_receipt, _normalize_hailo_hw_arch,
+    )
     from ..preprocessing_contract import canonical_runtime_dtype, resolve_image_preprocessing_contract
     from ..runners.generic_quality_accounting import authorized_runs
     from .artifacts import sha256_file
@@ -149,12 +153,14 @@ def _materialize_imported_generic_hailo_hints(
 
     records = []
     for run in authorized_runs({"runs": runs}, profile):
-        if hailo_scope_backend(run.get("stage1")) != "hailo10":
+        backend = hailo_scope_backend(run.get("stage1"))
+        if backend not in {"hailo8", "hailo10"}:
             continue
+        arch = "hailo10h" if backend == "hailo10" else "hailo8"
         for case in run["case_ids"]:
-            if ("hailo10", case, "part1") in (skip_requests or set()):
+            if (backend, case, "part1") in (skip_requests or set()):
                 continue
-            destination = _contained(suite, f"{case}/hailo/hailo10/part1/compiled.hef")
+            destination = _contained(suite, f"{case}/hailo/{backend}/part1/compiled.hef")
             if destination.exists():
                 continue  # Existing artifacts retain their ordinary verifier.
             declared = run["generic_quality_completion_sources"][case]
@@ -170,7 +176,7 @@ def _materialize_imported_generic_hailo_hints(
             require(config.get("schema") == "onnx-splitpoint/generic-composed-quality-completion-config"
                     and identity.get("model_id") == model_id and identity.get("case_id") == case
                     and identity.get("setup_id") == run["hardware_setup_id"]
-                    and identity.get("comparison_backend") == "hailo10h", "identity_changed")
+                    and identity.get("comparison_backend") == arch, "identity_changed")
             binding = (config.get("generic_artifact_binding") or {}).get("artifacts") or {}
             require(all(binding.get(role) == artifacts.get(role) for role in
                         ("part1_runtime", "part1_build_receipt", "source_part1_onnx")), "artifact_sections_differ")
@@ -182,13 +188,17 @@ def _materialize_imported_generic_hailo_hints(
             require(graph.is_relative_to(suite / case) and matches(graph, source_graph), "source_onnx_changed")
             require((source / case / "split_manifest.json").read_bytes()
                     == (suite / case / "split_manifest.json").read_bytes(), "split_manifest_changed")
+            split = _read_json(suite / case / "split_manifest.json")
+            part1 = str(split.get("part1_model") or split.get("part1") or split.get("part1_path") or "")
+            require(split.get("boundary", split.get("boundary_index")) == int(case[1:])
+                    and part1 and graph == _contained(suite / case, part1), "source_boundary_changed")
             original_hef = _producer_source_path(hef["local_path"])
             original_receipt = _producer_source_path(receipt["local_path"])
             require(original_hef.is_absolute() and original_receipt.is_absolute()
                     and matches(original_hef, hef) and matches(original_receipt, receipt), "original_artifact_changed")
             require(_hailo_receipt_path(original_hef) == original_receipt, "original_receipt_not_adjacent")
             saved = _read_json(original_receipt)
-            require(hailo_scope_backend(saved.get("hw_arch")) == "hailo10", "receipt_arch_changed")
+            require(_normalize_hailo_hw_arch(saved.get("hw_arch")) == arch, "receipt_arch_changed")
             payload = saved.get("cache_payload") or {}
             for key, field, multiplier in (
                 ("calib_count", "calibration_count", 1), ("calib_count", "requested_calibration_count", 1),
@@ -242,7 +252,7 @@ def _materialize_imported_generic_hailo_hints(
                 "reuse": "verified_original_bytes_no_compiler_invocation",
                 "original_receipt_bytes_preserved": True, "compiler_dispatch_count": 0}
             write_json(destination.with_name("generic_quality_original_hailo_reuse.json"), record)
-            _register_imported_generic_hailo_hint(suite, case, destination, runs)
+            _register_imported_generic_hailo_hint(suite, case, destination, runs, backend=backend)
             records.append(record)
     return records
 

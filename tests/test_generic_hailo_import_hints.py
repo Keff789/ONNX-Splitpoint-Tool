@@ -1,7 +1,7 @@
-"""Original H10 hints fill an imported H8 suite without a compiler request.
+"""Original Hailo hints fill a different-backend suite without a compiler request.
 
-All artifact bytes are owned unit-test fixtures; receipt validation is the
-only replaced production operation. No SDK, accelerator, or inference runs.
+All artifact bytes are owned unit-test fixtures. Both the ordinary real receipt
+validator and isolated rejection checks run without SDK, accelerator or inference.
 """
 from __future__ import annotations
 
@@ -46,11 +46,14 @@ def _seal_config(data):
     run["generic_quality_completion_config_sha256"]["b001"] = _digest(data["config_path"])
 
 
-def _prepared(tmp_path):
+def _prepared(tmp_path, *, backend="hailo10"):
+    arch = "hailo10h" if backend == "hailo10" else "hailo8"
+    donor = "hailo8" if backend == "hailo10" else "hailo10"
+    donor_arch = "hailo8" if backend == "hailo10" else "hailo10h"
     data = _fixture(tmp_path)
     run = data["profile"]["run_profiles"][0]
-    run.update(id="hailo10_to_trt", stage1={"type": "hailo", "hw_arch": "hailo10"},
-               hardware_setup_id="own_hailo10_setup", image_scale="norm")
+    run.update(id=backend + "_to_trt", stage1={"type": "hailo", "hw_arch": backend},
+               hardware_setup_id="own_" + backend + "_setup", image_scale="norm")
     data["profile"]["run_profiles"] = [run]
     data["profile"]["hailo_build"] = {
         "mode": "reuse_only", "force_build": False, "calib_count": 500,
@@ -63,16 +66,16 @@ def _prepared(tmp_path):
     data["profile"]["campaign"] = {"dataset_manifests": {
         "detection": {"calibration": str(calibration)}}}
     for row in data["catalogue"]:
-        hef = data["source"] / row["case_id"] / "hailo/hailo8/part1/compiled.hef"
+        hef = data["source"] / row["case_id"] / f"hailo/{donor}/part1/compiled.hef"
         hef.parent.mkdir(parents=True, exist_ok=True)
-        hef.write_bytes(("OWN historical H8 " + row["case_id"]).encode())
-        h8 = {"part1": "hailo/hailo8/part1/compiled.hef", "part1_build": {
-            "hef_path": "hailo/hailo8/part1/compiled.hef", "OWN_H8_PROVENANCE": row["case_id"]}}
+        hef.write_bytes(("OWN historical " + donor + " " + row["case_id"]).encode())
+        h8 = {"part1": f"hailo/{donor}/part1/compiled.hef", "part1_build": {
+            "hef_path": f"hailo/{donor}/part1/compiled.hef", "OWN_DONOR_PROVENANCE": row["case_id"]}}
         _write(data["source"] / row["case_id"] / "split_manifest.json", {
             "boundary": row["boundary"], "part1": "part1.onnx", "part2": "part2.onnx",
-            "cut_tensors": ["own_cut"], "hailo": {"hefs": {"hailo8": h8}}})
-        row["hailo_case_variant_availability"] = build_case_hailo_variant_availability({}, {"hailo8": h8})
-        row["hailo_compile"] = {"hailo8": {"part1": deepcopy(h8["part1_build"])}}
+            "cut_tensors": ["own_cut"], "hailo": {"hefs": {donor_arch: h8}}})
+        row["hailo_case_variant_availability"] = build_case_hailo_variant_availability({}, {donor_arch: h8})
+        row["hailo_compile"] = {donor_arch: {"part1": deepcopy(h8["part1_build"])}}
     source_set = json.loads((data["source"] / "benchmark_set.json").read_text())
     source_set["cases"] = data["catalogue"]
     _write(data["source"] / "benchmark_set.json", source_set)
@@ -83,15 +86,15 @@ def _prepared(tmp_path):
         [helper.make_tensor_value_info("own_cut", TensorProto.FLOAT, [1, 3, 640, 640])],
     )
     onnx.save(helper.make_model(graph), case / "part1.onnx")
-    original = tmp_path / "own_original_regular_generation/b001/hailo/hailo10/part1"
+    original = tmp_path / f"own_original_regular_generation/b001/hailo/{backend}/part1"
     original.mkdir(parents=True)
     hef, receipt_path = original / "compiled.hef", original / "hailo_hef_build_receipt.json"
-    hef.write_bytes(b"OWN original regular H10 HEF fixture\x00")
+    hef.write_bytes(("OWN original regular " + backend + " HEF fixture\x00").encode())
     preprocessing, preprocessing_sha = resolve_image_preprocessing_contract(
         task="detection", target_hw=[640, 640])
     payload = {
-        "schema": "onnx-splitpoint/hailo-hef-cache/v3",
-        "model_sha256": _digest(case / "part1.onnx"), "hw_arch": "hailo10h",
+        "schema": "onnx-splitpoint/hailo-hef-cache-key-v3",
+        "model_sha256": _digest(case / "part1.onnx"), "hw_arch": arch,
         "net_name": "model_part1_b1", "net_input_shapes": [1, 3, 640, 640],
         "disable_rt_metadata_extraction": True, "optimization_level": 1,
         "calibration_count": 500, "requested_calibration_count": 500,
@@ -100,14 +103,26 @@ def _prepared(tmp_path):
         "calibration_identity": "manifest:" + _digest(calibration),
         "preprocessing_contract": preprocessing,
         "preprocessing_contract_sha256": preprocessing_sha,
+        "hailo_sdk_version": "OWN_FIXTURE_DFC_VERSION",
+        "start_nodes": [], "end_nodes": [],
     }
+    prepared_sha = hashlib.sha256(json.dumps({
+        "calibration_identity": payload["calibration_identity"],
+        "preprocessing_contract_sha256": preprocessing_sha,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    payload["prepared_calibration_identity_sha256"] = prepared_sha
     receipt = {
-        "schema": "onnx-splitpoint/hailo-hef-build-receipt/v1", "hw_arch": "hailo10h",
+        "schema": "onnx-splitpoint/hailo-hef-build-receipt/v2", "hw_arch": arch,
+        "compiler_onnx_filename": "model_part1_b1_hailo_fixed.onnx",
         "source_onnx_sha256": _digest(case / "part1.onnx"),
         "compiler_onnx_sha256": _digest(case / "part1.onnx"),
         "hef_sha256": _digest(hef), "hef_size_bytes": hef.stat().st_size,
         "net_name": "model_part1_b1", "preprocessing_contract": preprocessing,
         "preprocessing_contract_sha256": preprocessing_sha, "cache_payload": payload,
+        **{key: payload[key] for key in (
+            "hailo_sdk_version", "calibration_count", "requested_calibration_count",
+            "calibration_storage", "calibration_memory_cap_bytes", "calibration_identity",
+            "prepared_calibration_identity_sha256")},
         "cache_key": hashlib.sha256(json.dumps(payload, sort_keys=True,
             separators=(",", ":"), ensure_ascii=False).encode()).hexdigest(),
     }
@@ -121,18 +136,18 @@ def _prepared(tmp_path):
     }
     config.update(
         identity={"model_id": "model", "case_id": "b001", "setup_id": run["hardware_setup_id"],
-                  "comparison_backend": "hailo10h"},
+                  "comparison_backend": arch},
         expected_runtime_artifacts=artifacts,
         generic_artifact_binding={"artifacts": deepcopy(artifacts)},
         completion_contract={"processor_contract": {"input_hw": [640, 640]}},
         preprocess={"mode": "letterbox", "pad_value": 114, "rgb": True},
         representative_input={"prepared_input": {"dtype": "uint8", "shape": [640, 640, 3]}},
     )
-    data.update(run=run, config=config, config_path=config_path, original_hef=hef,
+    data.update(backend=backend, arch=arch, donor_arch=donor_arch, run=run, config=config, config_path=config_path, original_hef=hef,
                 original_receipt=receipt_path, receipt=receipt)
     _seal_config(data)
     assert not list(data["source"].rglob("deferred_hailo_build.json"))
-    assert not list(data["source"].glob("*/hailo/hailo10/part1/compiled.hef"))
+    assert not list(data["source"].glob(f"*/hailo/{backend}/part1/compiled.hef"))
     return data
 
 
@@ -162,11 +177,11 @@ def _verifier(data, monkeypatch):
 def _ordinary_observations(data, result):
     contract = json.loads(result.artifacts["benchmark_set_json"].read_text())
     decision_result = materialize_backend_artifact_decisions(
-        run_dir=data["run_root"], model_id="model", targets=["hailo10"],
+        run_dir=data["run_root"], model_id="model", targets=[data["backend"]],
         full_baseline_plan={}, output_contracts={}, benchmark_set_contract=contract)
     decisions = json.loads(decision_result["artifacts"]["backend_artifact_decisions_json"].read_text())
     service_result = materialize_hailo_artifact_service_plan(
-        run_dir=data["run_root"], model_id="model", targets=["hailo10"],
+        run_dir=data["run_root"], model_id="model", targets=[data["backend"]],
         full_baseline_plan={}, output_contracts={}, benchmark_set_contract=contract,
         backend_artifact_decisions=decisions, build_backend_artifacts_request={},
         no_remote=True, execution_mode="generate_and_run")
@@ -315,3 +330,135 @@ def test_import_without_original_hint_keeps_h10_absent_and_normal_unknown(tmp_pa
         applicable_roles={"model": roles}, block_on_unexpected_cold_builds=True)
     assert report["runtime_dispatch_allowed"] is False
     assert calls == []
+
+
+@pytest.mark.parametrize("backend", ["hailo8", "hailo10"])
+def test_original_hint_passes_real_receipt_validator_and_normal_preflight(tmp_path, backend):
+    data = _prepared(tmp_path, backend=backend)
+    originals = {path: path.read_bytes() for root in (data["source"], data["original_hef"].parent)
+                 for path in root.rglob("*") if path.is_file()}
+    source_manifest = json.loads((data["source"] / "b001/split_manifest.json").read_text())
+    assert hailo_backend._load_valid_hailo_receipt(data["original_hef"]) == data["receipt"]
+    result = _import(data, targets=[backend, "tensorrt"])
+    target = result.suite_dir / f"b001/hailo/{backend}/part1/compiled.hef"
+    assert target.read_bytes() == data["original_hef"].read_bytes()
+    receipt = target.with_name("hailo_hef_build_receipt.json")
+    assert receipt.read_bytes() == data["original_receipt"].read_bytes()
+    assert not target.samefile(data["original_hef"])
+    assert not receipt.samefile(data["original_receipt"])
+    assert hailo_backend._load_valid_hailo_receipt(target) == data["receipt"]
+    provenance = json.loads(target.with_name("generic_quality_original_hailo_reuse.json").read_text())
+    assert provenance["config"] == _descriptor(data["config_path"])
+    assert provenance["original_HEF"] == data["config"]["expected_runtime_artifacts"]["part1_runtime"]
+    assert provenance["original_receipt"] == data["config"]["expected_runtime_artifacts"]["part1_build_receipt"]
+    assert provenance["compiler_dispatch_count"] == 0
+    assert provenance["original_receipt_bytes_preserved"] is True
+    manifest = json.loads((result.suite_dir / "b001/split_manifest.json").read_text())
+    assert manifest["hailo"]["hefs"][data["donor_arch"]] == source_manifest["hailo"]["hefs"][data["donor_arch"]]
+    assert manifest["hailo"]["hefs"][data["arch"]] == {
+        "part1": f"hailo/{backend}/part1/compiled.hef",
+        "part1_original_reuse": {
+            "receipt": f"hailo/{backend}/part1/hailo_hef_build_receipt.json",
+            "provenance": f"hailo/{backend}/part1/generic_quality_original_hailo_reuse.json"}}
+    for relative, key in (("benchmark_set.json", "cases"),
+                          ("../benchmark_set.json", "cases"),
+                          ("../generation_decisions.json", "accepted_cases")):
+        cases = json.loads((result.suite_dir / relative).read_text())[key]
+        selected = next(row for row in cases if row["case_id"] == "b001")
+        assert selected["hailo_case_variant_availability"][data["arch"]]["part1"] is True
+        assert selected["hailo_compile"][data["arch"]] == {
+            "part1": {"hef_path": f"hailo/{backend}/part1/compiled.hef"}}
+        assert selected["hailo_case_variant_availability"][data["arch"]]["part2"] is False
+    assert not list(result.suite_dir.rglob("deferred_hailo_build*.json"))
+    service, rows, roles = _ordinary_observations(data, result)
+    assert service["build_attempt_count"] == 0
+    assert len(service["case_hef_requests"]) == 1
+    assert service["case_hef_requests"][0]["status"] == "ready_existing_hef"
+    assert [(row.backend, row.item_id, row.status, row.reason) for row in rows] == [
+        (data["arch"], "b001:part1", "HIT", "existing_hailo_receipt_valid")]
+    assert rows[0].evidence["current_build"] is False
+    report = build_artifact_cache_preflight(model_ids=["model"], observations=rows,
+        applicable_roles={"model": roles}, block_on_unexpected_cold_builds=True)
+    assert report["runtime_dispatch_allowed"] is True
+    assert all(path.read_bytes() == body for path, body in originals.items())
+
+
+def _reseal_receipt(data):
+    _write(data["original_receipt"], data["receipt"])
+    descriptor = _descriptor(data["original_receipt"], key="local_path")
+    for section in (data["config"]["expected_runtime_artifacts"],
+                    data["config"]["generic_artifact_binding"]["artifacts"]):
+        section["part1_build_receipt"] = deepcopy(descriptor)
+    _seal_config(data)
+
+
+@pytest.mark.parametrize("fault,reason", [
+    ("wrong_arch", "receipt_arch_changed"),
+    ("wrong_arch_variant", "receipt_arch_changed"),
+    ("wrong_model", "identity_changed"),
+    ("wrong_case", "identity_changed"),
+    ("wrong_setup", "identity_changed"),
+    ("wrong_backend", "identity_changed"),
+    ("artifact_sections", "artifact_sections_differ"),
+    ("source_output", "source_onnx_changed"),
+    ("boundary", "source_boundary_changed"),
+    ("manifest_graph", "source_boundary_changed"),
+    ("hef_bytes", "original_artifact_changed"),
+    ("receipt_hef_sha", "original_receipt_invalid"),
+    ("receipt_source_sha", "original_receipt_invalid"),
+    ("receipt_net_name", "original_receipt_invalid"),
+    ("receipt_input_shape", "original_receipt_invalid"),
+    ("receipt_cache_key", "original_receipt_invalid"),
+    ("receipt_diagnostic_only", "original_receipt_invalid"),
+    ("calibration", "compiler_contract_changed:calib_count"),
+    ("input_encoding", "preprocessing_changed"),
+])
+def test_h8_hint_rejects_mismatches_without_receipt_or_request_fabrication(tmp_path, fault, reason):
+    data = _prepared(tmp_path, backend="hailo8")
+    if fault.startswith("wrong_") and fault not in {"wrong_arch", "wrong_arch_variant"}:
+        field = {"wrong_model": "model_id", "wrong_case": "case_id", "wrong_setup": "setup_id",
+                 "wrong_backend": "comparison_backend"}[fault]
+        data["config"]["identity"][field] = "OWN_FOREIGN"
+        _seal_config(data)
+    elif fault == "artifact_sections":
+        data["config"]["generic_artifact_binding"]["artifacts"]["part1_runtime"]["sha256"] = "0" * 64
+        _seal_config(data)
+    elif fault == "source_output":
+        graph_path = data["source"] / "b001/part1.onnx"
+        graph = onnx.load(graph_path)
+        graph.graph.output[0].type.tensor_type.shape.dim[1].dim_value = 5
+        onnx.save(graph, graph_path)
+    elif fault in {"boundary", "manifest_graph"}:
+        path = data["source"] / "b001/split_manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["boundary" if fault == "boundary" else "part1"] = 2 if fault == "boundary" else "part2.onnx"
+        _write(path, manifest)
+    elif fault == "hef_bytes":
+        data["original_hef"].write_bytes(b"OWN FOREIGN HEF")
+    elif fault == "calibration":
+        data["profile"]["hailo_build"]["calib_count"] += 1
+    elif fault == "input_encoding":
+        data["config"]["representative_input"]["prepared_input"]["dtype"] = "float32"
+        _seal_config(data)
+    else:
+        receipt = data["receipt"]
+        if fault in {"wrong_arch", "wrong_arch_variant"}:
+            receipt["hw_arch"] = "hailo10h" if fault == "wrong_arch" else "hailo8l"
+        elif fault == "receipt_input_shape":
+            receipt["cache_payload"]["net_input_shapes"] = [1, 3, 320, 320]
+        elif fault == "receipt_diagnostic_only":
+            receipt["diagnostic_only"] = True
+        else:
+            field = {"receipt_hef_sha": "hef_sha256", "receipt_source_sha": "source_onnx_sha256",
+                     "receipt_net_name": "net_name", "receipt_cache_key": "cache_key"}[fault]
+            receipt[field] = "OWN_FOREIGN" if field == "net_name" else "0" * 64
+        _reseal_receipt(data)
+    originals = {path: path.read_bytes() for root in (data["source"], data["original_hef"].parent)
+                 for path in root.rglob("*") if path.is_file()}
+    with pytest.raises(ValueError, match="generic_quality_hailo_import_hint_" + reason):
+        _import(data, targets=["hailo8", "tensorrt"])
+    target = data["run_root"] / "models/model/benchmark_set/legacy_suite/b001/hailo/hailo8/part1"
+    assert not (target / "compiled.hef").exists()
+    assert not (target / "hailo_hef_build_receipt.json").exists()
+    assert not list(data["run_root"].rglob("deferred_hailo_build*.json"))
+    assert all(path.read_bytes() == body for path, body in originals.items())
