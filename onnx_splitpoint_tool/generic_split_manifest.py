@@ -282,7 +282,12 @@ def _omitted_h10_reuse_provenance(build, original, *, case):
     }
 
 
-def _bind_historical_receipt(raw, build, bindings):
+def _receipt_publication_flags(receipt, *, positive_original=False):
+    return ((receipt.get("publish_artifacts") is True and receipt.get("diagnostic_only") is False)
+            or (positive_original is True and "publish_artifacts" not in receipt and "diagnostic_only" not in receipt))
+
+
+def _bind_historical_receipt(raw, build, bindings, *, legacy_positive_original=False):
     """Tie old compile provenance to the exact receipt actually measured."""
     receipt_binding = bindings["part1_build_receipt"]
     _require(isinstance(raw, bytes) and 0 < len(raw) <= 2 * 1024**2,
@@ -302,8 +307,7 @@ def _bind_historical_receipt(raw, build, bindings):
     payload, key = evidence["cache_payload_v3"], evidence["key"]
     _require(isinstance(receipt, dict)
              and receipt.get("schema") == "onnx-splitpoint/hailo-hef-build-receipt/v2"
-             and receipt.get("publish_artifacts") is True
-             and receipt.get("diagnostic_only") is False
+             and _receipt_publication_flags(receipt, positive_original=legacy_positive_original)
              and receipt.get("cache_key") == evidence["cache_key_v3"]
              and ("cache_key" not in build or build["cache_key"] == evidence["cache_key_v3"])
              and receipt.get("cache_payload") == payload
@@ -333,7 +337,8 @@ def _bind_historical_receipt(raw, build, bindings):
             "net_name": receipt["net_name"]}
 
 
-def _h8_receipt_input_authority(raw, bindings, original, staged, prepared, contract):
+def _h8_receipt_input_authority(raw, bindings, original, staged, prepared, contract,
+                              *, model, case, full_model_sha256):
     """Bind native H8 input dimensions to the own measured HEF receipt."""
     from .build_evidence import canonical_sha256
     from .preprocessing_contract import resolve_image_preprocessing_contract
@@ -347,10 +352,18 @@ def _h8_receipt_input_authority(raw, bindings, original, staged, prepared, contr
         raise ValueError("Generic split-manifest staging: nonfinite H8 receipt constant: " + value)
     receipt = json.loads(raw, object_pairs_hook=_object, parse_constant=invalid_constant)
     payload = receipt.get("cache_payload") or {}
+    legacy_positive = None
+    if "publish_artifacts" not in receipt and "diagnostic_only" not in receipt:
+        build = ((original.get("hailo") or {}).get("hefs") or {}).get("hailo8", {}).get("part1_build") or {}
+        _require(("publish_artifacts" not in build or build["publish_artifacts"] is True)
+                 and ("diagnostic_only" not in build or build["diagnostic_only"] is False),
+                 "legacy receipt original build is unpublished or diagnostic")
+        legacy_positive = _positive_original_build(build, original, arch="hailo8", model=model,
+            case=case, bindings=bindings, full_model_sha256=full_model_sha256, prepared=prepared)
     shape = [1, 3, *prepared["shape"][:2]]
     _require(receipt.get("schema") == "onnx-splitpoint/hailo-hef-build-receipt/v2"
              and receipt.get("hw_arch") == payload.get("hw_arch") == "hailo8"
-             and receipt.get("publish_artifacts") is True and receipt.get("diagnostic_only") is False
+             and _receipt_publication_flags(receipt, positive_original=legacy_positive is not None)
              and receipt.get("source_onnx_sha256") == bindings["source_part1_onnx"]["sha256"]
              and _sha(receipt.get("compiler_onnx_sha256"))
              and payload.get("model_sha256") == receipt["compiler_onnx_sha256"]
@@ -386,7 +399,9 @@ def _h8_receipt_input_authority(raw, bindings, original, staged, prepared, contr
             "source_part1_onnx": deepcopy(bindings["source_part1_onnx"]),
             "hef": deepcopy(bindings["part1_runtime"]), "cache_key": receipt["cache_key"],
             "net_name": receipt["net_name"], "net_input_shapes": shape,
-            "input_name": name, "preprocessing_contract_sha256": preprocessing_sha}
+            "input_name": name, "preprocessing_contract_sha256": preprocessing_sha,
+            "legacy_publication_flags_absent": legacy_positive is not None,
+            "positive_original_build_for_legacy_flags": legacy_positive}
 
 
 def _positive_original_build(build, original, *, arch, model, case, bindings,
@@ -626,7 +641,8 @@ def _validate_generic_split_manifest_staging(
     h8_input_authority = None
     if imported_hint:
         h8_input_authority = _h8_receipt_input_authority(part1_build_receipt_bytes,
-            bindings, original, staged, prepared, contract)
+            bindings, original, staged, prepared, contract,
+            model=model, case=case, full_model_sha256=full_model_sha256)
     else:
         _require(input_manifest["deepx"]["part1_dxnn"]["cache_contract"]["input_shape"]
                  == [1, 3, *prepared["shape"][:2]], "actual typed timing input binding differs")
@@ -749,7 +765,8 @@ def _validate_generic_split_manifest_staging(
                          and old_build.get("cache_key", h8_input_authority["cache_key"]) == h8_input_authority["cache_key"],
                          "original-H8 receipt hint differs")
                 if proof.get("historical_reuse_observation") is not True:
-                    proof["actual_receipt_binding"] = _bind_historical_receipt(part1_build_receipt_bytes, old_build, bindings)
+                    proof["actual_receipt_binding"] = _bind_historical_receipt(part1_build_receipt_bytes, old_build, bindings,
+                        legacy_positive_original=h8_input_authority["legacy_publication_flags_absent"])
                     historical_build_reuse.append(proof)
                 permit(("hailo", "hefs", arch, "part1_build"), "original build retained in provenance; no current build record invented")
                 permit(("hailo", "hefs", arch, "part1_original_reuse"), "own measured HEF/receipt attached through normal import hint")
@@ -758,10 +775,16 @@ def _validate_generic_split_manifest_staging(
                 fields = {"cache_hit", "cache_key", "context_mode", "elapsed_s", "mapping_failed",
                     "multi_context_used", "ok", "single_context_failed", "single_context_used",
                     "skipped", "timed_out", "watchdog_expired"}
+                # An old positive reuse observation can predate cache-key
+                # recording. Its new unused-backend summary is not authority
+                # for a cache hit: retain that extra key explicitly unverified.
+                unverified_unused_key = ("cache_key" not in old_build
+                    and proof.get("historical_reuse_observation") is True)
                 _require(set(new_hef) == {"part1", "part1_build"} and set(new_build) == fields
                          and new_build["cache_hit"] is new_build["ok"] is new_build["skipped"] is True
                          and new_build["context_mode"] == "skipped"
-                         and new_build["cache_key"] == old_build.get("cache_key") and _sha(new_build["cache_key"])
+                         and _sha(new_build["cache_key"])
+                         and (unverified_unused_key or new_build["cache_key"] == old_build.get("cache_key"))
                          and all(new_build[key] is False for key in ("mapping_failed", "multi_context_used",
                              "single_context_failed", "single_context_used", "timed_out", "watchdog_expired"))
                          and type(new_build["elapsed_s"]) in (int, float)
@@ -769,7 +792,10 @@ def _validate_generic_split_manifest_staging(
                          "unproved positive unused H10 import summary")
                 retained_historical_build_metadata.append({**proof, "build_record_unchanged": False,
                     "staged_unexecuted_summary": deepcopy(new_build), "current_compile_claimed": False,
-                    "current_reuse_claimed": False})
+                    "current_reuse_claimed": False,
+                    "staged_cache_key_status": ("unverified_unused_metadata" if unverified_unused_key
+                        else "matches_original_recorded_cache_key"),
+                    "staged_cache_key_verified": not unverified_unused_key})
                 permit(("hailo", "hefs", arch, "part1_build"), "positive unused H10 summary; original build retained in provenance")
                 for key in sorted(set(old_hef) & _FULL_FIELDS):
                     permit(("hailo", "hefs", arch, key), "unexecuted H10 Full metadata remains in original authority")

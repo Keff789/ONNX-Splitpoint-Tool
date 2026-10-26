@@ -1,0 +1,221 @@
+{
+  "boundary": 245,
+  "boundary_index": 245,
+  "created_at": "2026-10-24T13:37:54",
+  "cut": {
+    "count": 3,
+    "names_full": [
+      "/model.10/cv2/act/Mul_output_0",
+      "/model.13/cv2/act/Mul_output_0",
+      "/model.16/cv2/conv/Conv_output_0"
+    ],
+    "names_part1": [
+      "/model.10/cv2/act/Mul_output_0",
+      "/model.13/cv2/act/Mul_output_0",
+      "/model.16/cv2/conv/Conv_output_0"
+    ],
+    "names_part2": [
+      "/model.10/cv2/act/Mul_output_0",
+      "/model.13/cv2/act/Mul_output_0",
+      "/model.16/cv2/conv/Conv_output_0"
+    ]
+  },
+  "cut_tensors": [
+    "/model.10/cv2/act/Mul_output_0",
+    "/model.13/cv2/act/Mul_output_0",
+    "/model.16/cv2/conv/Conv_output_0"
+  ],
+  "cut_tensors_full": [
+    "/model.10/cv2/act/Mul_output_0",
+    "/model.13/cv2/act/Mul_output_0",
+    "/model.16/cv2/conv/Conv_output_0"
+  ],
+  "full_model": "../models/yolo26m.onnx",
+  "full_model_source": "/home/kmika/Models/yolo26m.onnx",
+  "hailo": {
+    "backend_terminal_states": [
+      {
+        "available": true,
+        "hw_arch": "hailo8",
+        "reason": "artifact_available",
+        "status": "ready",
+        "terminal": true,
+        "variant": "part1"
+      }
+    ],
+    "builds_deferred_until_cache_preflight": true,
+    "case_variant_availability": {
+      "hailo10h": {
+        "composed": false,
+        "full": false,
+        "full_error": "",
+        "full_failed": false,
+        "part1": true,
+        "part1_error": "",
+        "part1_failed": false,
+        "part2": false,
+        "part2_error": "",
+        "part2_failed": false
+      },
+      "hailo8": {
+        "composed": false,
+        "full": false,
+        "full_error": "",
+        "full_failed": false,
+        "part1": true,
+        "part1_error": "",
+        "part1_failed": false,
+        "part2": false,
+        "part2_error": "",
+        "part2_failed": false
+      }
+    },
+    "config": {
+      "backend": "auto",
+      "build": {
+        "full": false,
+        "part1": true,
+        "part2": false
+      },
+      "calib_batch_size": 8,
+      "calib_count": 500,
+      "calib_dir": "/home/kmika/.onnx_splitpoint_tool/final_datasets/coco2017/prepared/train_calibration_n500_s20260710/images",
+      "fixup": true,
+      "force": false,
+      "keep_artifacts": true,
+      "opt_level": 1,
+      "timeout_s": 3600,
+      "wsl_distro": null,
+      "wsl_venv": "auto"
+    },
+    "hefs": {
+      "hailo10": {
+        "part1": "hailo/hailo10/part1/compiled.hef",
+        "part1_build": {
+          "cache_hit": true,
+          "cache_key": "f5499996eeb2c93b65e2d4ac05ce28d4f054007e3a6d795d3c53d3752b3a56da",
+          "context_mode": "skipped",
+          "elapsed_s": 0.9254491329193115,
+          "mapping_failed": false,
+          "multi_context_used": false,
+          "ok": true,
+          "single_context_failed": false,
+          "single_context_used": false,
+          "skipped": true,
+          "timed_out": false,
+          "watchdog_expired": false
+        }
+      },
+      "hailo8": {
+        "part1": "hailo/hailo8/part1/compiled.hef",
+        "part1_original_reuse": {
+          "provenance": "hailo/hailo8/part1/generic_quality_original_hailo_reuse.json",
+          "receipt": "hailo/hailo8/part1/hailo_hef_build_receipt.json"
+        }
+      }
+    }
+  },
+  "io": {
+    "part1_external_inputs": [
+      "images"
+    ],
+    "part1_inputs": [],
+    "part1_outputs": [],
+    "part2_external_inputs": [
+      "/model.10/cv2/act/Mul_output_0",
+      "/model.13/cv2/act/Mul_output_0",
+      "/model.16/cv2/conv/Conv_output_0"
+    ],
+    "part2_inputs": [],
+    "part2_outputs": [
+      "output0"
+    ]
+  },
+  "models": {
+    "full": {
+      "path": "../models/yolo26m.onnx",
+      "source": "/home/kmika/Models/yolo26m.onnx"
+    },
+    "part1": {
+      "path": "yolo26m_part1_b245.onnx"
+    },
+    "part2": {
+      "path": "yolo26m_part2_b245.onnx"
+    }
+  },
+  "orig_inputs": [
+    "images"
+  ],
+  "orig_outputs": [
+    "output0"
+  ],
+  "part1": "yolo26m_part1_b245.onnx",
+  "part1_cut_names": [
+    "/model.10/cv2/act/Mul_output_0",
+    "/model.13/cv2/act/Mul_output_0",
+    "/model.16/cv2/conv/Conv_output_0"
+  ],
+  "part1_external_inputs": [
+    "images"
+  ],
+  "part2": "yolo26m_part2_b245.onnx",
+  "part2_cut_names": [
+    "/model.10/cv2/act/Mul_output_0",
+    "/model.13/cv2/act/Mul_output_0",
+    "/model.16/cv2/conv/Conv_output_0"
+  ],
+  "part2_external_inputs": [
+    "/model.10/cv2/act/Mul_output_0",
+    "/model.13/cv2/act/Mul_output_0",
+    "/model.16/cv2/conv/Conv_output_0"
+  ],
+  "part2_output_strategy": "original",
+  "part2_outputs_effective": [
+    "output0"
+  ],
+  "part2_outputs_original": [
+    "output0"
+  ],
+  "pipeline": {
+    "links": [
+      {
+        "from": "/model.10/cv2/act/Mul_output_0",
+        "to": "/model.10/cv2/act/Mul_output_0"
+      },
+      {
+        "from": "/model.13/cv2/act/Mul_output_0",
+        "to": "/model.13/cv2/act/Mul_output_0"
+      },
+      {
+        "from": "/model.16/cv2/conv/Conv_output_0",
+        "to": "/model.16/cv2/conv/Conv_output_0"
+      }
+    ],
+    "stage1": "part1",
+    "stage2": "part2"
+  },
+  "predicted": {
+    "cut_bytes": 10649600.0,
+    "cut_mib": 10.15625,
+    "flops_left": 25934361600.0,
+    "hailo_compile_risk_score": 3.116372225841503,
+    "hailo_cut_mib": 10.15625,
+    "hailo_flops_left_ratio": 0.7533292941960354,
+    "hailo_flops_right_ratio": 0.24667070580396458,
+    "hailo_hardware_fit_score": 3.074938783972508,
+    "hailo_n_cut_tensors": null,
+    "hailo_peak_act_left_mib": 50.0,
+    "hailo_peak_act_right_mib": 22.65625,
+    "hailo_single_context_probability": 0.3213420009027199,
+    "hailo_stage1_fit_score": 2.3846167833210377,
+    "hailo_strict_ok": null
+  },
+  "runner": "run_split_onnxruntime.py",
+  "schema": "onnx-splitpoint/split-manifest",
+  "schema_version": 1,
+  "strict_boundary": false,
+  "tool": {
+    "core": "2.95.5",
+    "gui": "workflow-legacy-adapter"
+  }
+}

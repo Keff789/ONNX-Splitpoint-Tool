@@ -4750,3 +4750,12 @@ Software: 88 gezielte Tests bestanden, begrenzter unabhängiger Peer CLEAR. Die 
 Die normale Factory ergänzt nach Quellenprüfung lokale Pfade und stage_local-Flags. Der Transferguard erhält jetzt exakte Rollen und sämtliche wissenschaftlichen Artefaktfelder und prüft allein diese lokalen Stagingergänzungen über den vorhandenen read_bound-SourceScope sowie die ursprüngliche positive Dateigröße. Ein aus den tatsächlich ausgeführten Factory-Stagingoperationen gewonnenes b236-Metadatenfixture deckt den Integrationspfad ab; ursprüngliche Request-/Receipt-/HEF-/Quellenbindungen bleiben unverändert.
 
 Software: 100 gezielte Tests bestanden, begrenzter unabhängiger Peer CLEAR. Kein dritter CPU-Versuch, keine neue Quality-, Source- oder Hardwareausführung. Das gebündelte Guardmodul erzeugt ein ehrlich ausgewiesenes Runtime-Delta; alte Messungen und Freezes werden nicht umgebunden.
+
+
+### 2026-10-26 – Historische positive H8-Receipts und ungenutzte H10-Summaries
+
+Ein historisches eigenes H8-Receipt ohne beide neueren Publish-/Diagnoseflags wird nur mit bereits streng validierter positiver Originalbuild-/Reuse-Historie und unverändert exakten Modell-, Cut-, Artefakt-, Cache-, Eingabe- und Preprocessingbindungen zugelassen. Explizite negative, diagnostische, partielle oder untypisierte Flags bleiben abgewiesen. Originalreceipts und Manifeste werden nicht umgeschrieben.
+
+Bei ausschließlich gemessenem H8 kann ein positiver historischer ungenutzter H10-Reuse-Datensatz noch keinen Cachekey enthalten. Ein zusätzliches Keyfeld im neuen ungenutzten Summary wird dann ausdrücklich als unverifizierte Metadaten erhalten, niemals als Cache- oder Reuse-Nachweis. Bekannt widersprechende Keys, negative Historie und wissenschaftliche Änderungen bleiben gesperrt.
+
+Software: tatsächliche vollständige b245-Manifestrelation und 486 gezielte Tests bestanden; keine Messung, Qualityneubewertung, Sourceaufnahme oder Importausführung. Alte F61-Messungen benötigen einen getrennt validierten neuen Importreader; die P5/P6-Runnerbytes werden nicht mit P3 gleichgesetzt.
