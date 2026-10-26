@@ -101,9 +101,11 @@ def _producer_python_sources(root, case_id):
 
 class _ProducerSourceAuthority:
     """Operation-local access to original authorized config and source bytes."""
-    __slots__ = ("__config_bytes", "__descriptors", "__root", "__case_id", "__sources")
+    __slots__ = ("__config_bytes", "__descriptors", "__root", "__case_id", "__sources",
+                 "__size_derivation")
 
-    def __init__(self, token, *, config_bytes, descriptors, root, case_id, sources):
+    def __init__(self, token, *, config_bytes, descriptors, root, case_id, sources,
+                 size_derivation=None):
         if token is not _PRODUCER_SOURCE_AUTHORITY_TOKEN:
             raise ValueError("generic_quality_producer_source_authority_factory_required")
         object.__setattr__(self, "_ProducerSourceAuthority__config_bytes", config_bytes)
@@ -112,9 +114,15 @@ class _ProducerSourceAuthority:
         object.__setattr__(self, "_ProducerSourceAuthority__root", str(root))
         object.__setattr__(self, "_ProducerSourceAuthority__case_id", case_id)
         object.__setattr__(self, "_ProducerSourceAuthority__sources", tuple(str(path) for path in sources))
+        object.__setattr__(self, "_ProducerSourceAuthority__size_derivation",
+                           json.dumps(size_derivation, sort_keys=True) if size_derivation else None)
 
     def __setattr__(self, name, value):
         raise AttributeError("Generic producer source authority is immutable")
+
+    def runtime_source_size_derivation(self):
+        """Return separately derived sizes, never a rewritten original config."""
+        return json.loads(self.__size_derivation) if self.__size_derivation else None
 
     def validate_evidence_sources(self, evidence):
         """Recheck real original files before admitting their portable projection."""
@@ -124,6 +132,11 @@ class _ProducerSourceAuthority:
         if _producer_python_sources(root, self.__case_id) != {Path(path) for path in self.__sources}:
             raise ValueError("generic_quality_producer_source_closure_changed")
         config = json.loads(self.__config_bytes)
+        derivation = self.runtime_source_size_derivation()
+        if derivation is not None:
+            from ..generic_producer_binding import validate_producer_run_binding
+            validate_producer_run_binding(derivation["producer_run_binding"]["run_dir"],
+                                          derivation["producer_run_binding"])
         config_file = evidence.get("config_file") if isinstance(evidence, Mapping) else None
         if (not isinstance(evidence, Mapping)
                 or not isinstance(config_file, Mapping)
@@ -138,13 +151,26 @@ class _ProducerSourceAuthority:
         if not isinstance(observed, list) or len(observed) != len(config["runtime_source_files"]):
             raise ValueError("generic_quality_producer_source_closure_changed")
         matched = set()
+        derived_sizes = ({item["path"]: item["size_bytes"]
+                          for item in derivation["actual_runtime_source_files"]}
+                         if derivation is not None else {})
         for declared in config["runtime_source_files"]:
             token = declared["path"]
             matches = [(index, source) for index, source in enumerate(observed)
                        if isinstance(source, Mapping) and isinstance(source.get("path"), str)
                        and source["path"].endswith("/" + token)]
             if (len(matches) != 1 or matches[0][0] in matched
-                    or any(matches[0][1].get(key) != declared[key] for key in ("sha256", "size_bytes"))):
+                    or matches[0][1].get("sha256") != declared["sha256"]):
+                raise ValueError("generic_quality_producer_source_closure_changed")
+            observed_size = matches[0][1].get("size_bytes")
+            if "size_bytes" in declared:
+                valid_size = observed_size == declared["size_bytes"]
+            else:
+                # The historical evidence may also omit its diagnostic size.
+                # Its SHA and all real source bytes remain mandatory above.
+                valid_size = (token in derived_sizes and ("size_bytes" not in matches[0][1]
+                              or (type(observed_size) is int and observed_size == derived_sizes[token])))
+            if not valid_size:
                 raise ValueError("generic_quality_producer_source_closure_changed")
             matched.add(matches[0][0])
         expected = config["expected_runtime_artifacts"]
@@ -157,7 +183,7 @@ class _ProducerSourceAuthority:
 
 
 def admit_generic_quality_producer_sources(*, profile, benchmark_plan, suite_dir,
-                                          config_path, model_id):
+                                          config_path, model_id, producer_run_binding=None):
     """Admit an original profile-selected config and its complete local sources."""
     from ..runners.generic_quality_accounting import authorized_runs
     from ..runners.generic_quality_completion import load_quality_completion_config
@@ -187,7 +213,36 @@ def admit_generic_quality_producer_sources(*, profile, benchmark_plan, suite_dir
     declared = raw.get("runtime_source_files")
     if not isinstance(declared, list) or len(declared) != 37:
         raise ValueError("generic_quality_producer_source_complete_37_required")
+    sha_only = all(isinstance(item, Mapping) and "size_bytes" not in item for item in declared)
+    size_derivation = None
+    if sha_only:
+        from .. import generic_only_plan as admission
+        from ..generic_producer_binding import validate_producer_run_binding
+        import yaml
+        if not isinstance(producer_run_binding, dict):
+            raise ValueError("generic_quality_producer_sha_only_creation_required")
+        primary = _producer_source_path(producer_run_binding.get("run_dir", ""))
+        if root != primary / "models" / model_id / "benchmark_set/legacy_suite":
+            raise ValueError("generic_quality_producer_sha_only_suite_changed")
+        row = {"original_run": str(primary), "producer_run_binding": producer_run_binding,
+               "identity": raw["identity"]}
+        validate_producer_run_binding(primary, producer_run_binding, [row])
+        if yaml.safe_load(admission.read_bound(producer_run_binding["profile"]).read_text()) != profile:
+            raise ValueError("generic_quality_producer_sha_only_profile_changed")
+        plan_path = _producer_source_path(root / "benchmark_plan.json")
+        plan_source = {"path": str(plan_path), "sha256": admission.file_sha256(plan_path),
+                       "size_bytes": plan_path.stat().st_size}
+        if admission._json(plan_source) != benchmark_plan:
+            raise ValueError("generic_quality_producer_sha_only_plan_changed")
+        size_derivation = {
+            "schema": "onnx-splitpoint/historical-sha-only-runtime-source-size-derivation-v1",
+            "mode": "actual_original_source_bytes_sizes_derived_separately",
+            "original_config": dict(source), "producer_run_binding": producer_run_binding,
+            "original_runtime_source_files": declared, "actual_runtime_source_files": [],
+            "original_config_request_and_evidence_rewritten": False}
     descriptors = [dict(source), copied]
+    if size_derivation is not None:
+        descriptors.append(plan_source)
     paths = set()
     for item in declared:
         if (not isinstance(item, Mapping) or not isinstance(item.get("path"), str)
@@ -198,12 +253,18 @@ def admit_generic_quality_producer_sources(*, profile, benchmark_plan, suite_dir
             raise ValueError("generic_quality_producer_source_closure_duplicated")
         paths.add(path)
         descriptor = {**item, "path": str(path)}
+        if size_derivation is not None:
+            descriptor["size_bytes"] = path.stat().st_size
         _producer_source_bytes(descriptor)
         descriptors.append(descriptor)
+        if size_derivation is not None:
+            size_derivation["actual_runtime_source_files"].append(
+                {**item, "size_bytes": descriptor["size_bytes"]})
     if paths != _producer_python_sources(root, case):
         raise ValueError("generic_quality_producer_source_complete_37_required")
     return _ProducerSourceAuthority(_PRODUCER_SOURCE_AUTHORITY_TOKEN,
-        config_bytes=payload, descriptors=descriptors, root=root, case_id=case, sources=paths)
+        config_bytes=payload, descriptors=descriptors, root=root, case_id=case, sources=paths,
+        size_derivation=size_derivation)
 
 
 def _publish_new(target, payload):
