@@ -4654,8 +4654,10 @@ Each `HistoricalQualityImport` binds the original accepted Generic FPS result,
 original plan, actual Native backing, Quality config, original normal Quality
 admission and the Quality producer's own normal row/source authority. Descriptors
 are rechecked in the normal source validation scope. The target must already be
-an admitted historical H8 Generic row with the exact physical identity and
-source authorities. No case numbers are special-cased.
+an admitted historical H8 Generic row or an already admitted paired DeepX row
+with the exact physical identity and source authorities. No case numbers are
+special-cased. DeepX backend aliases are compared by the existing normal
+canonicalizer; original identity fields are retained.
 
 Admission requires both original completion contracts to pass their unchanged
 normal verifier. Their scientific operator payloads must agree exactly after
@@ -4688,3 +4690,13 @@ rows and every target's FPS/repeat/provenance fields are unchanged before the
 existing normal index/merge transaction. CURRENT adoption belongs to its owner.
 This controller-only import does not change frozen hardware/runtime sources or
 require a measurement refreeze.
+
+### 2026-10-26: Beleggebundene Quality-Relation für bereits gemessene DeepX-Paare
+
+Neue normale N5000-Qualität gehört zu ihrem eigenen Producer und Request. Die vorhandenen gepaarten FPS-Zeilen haben dafür keine alte identische Requestbindung. Der unveränderte Exact-Request-Join bleibt deshalb ablehnend; die neue Qualität wird nicht nachträglich als ursprünglicher FPS-Request eingetragen.
+
+Die vorhandene typisierte Import-API unterstützt zusätzlich bereits zugelassene DeepX-Paare der Decoded-NMS-Familie. Sie prüft den ursprünglichen ausgewählten Plan und die versiegelte Cachezeile, Part1-Receipt und Source-Graph, sämtliche ursprünglichen Runtime-/Boundary-Artefakte sowie den tatsächlichen Native-Command. Der Native-Report muss außerdem die eindeutig zugehörige ursprüngliche Cohort-SHA und gegebenenfalls deren deklarierte Größe erfüllen; ein neu beschriebener Ersatz am selben Pfad genügt nicht. Der originale DeepX-Input muss dieselbe gebundene uint8-HWC-npy-Eingabe und denselben tatsächlich beobachteten RGB-Tensor verwenden. Der eigene typisierte FIFO-Speicher, seine einzige Kopie, exakte Native-/Generic-Zähler und die ursprünglichen Methodenverträge bleiben erforderlich. Quality wird weiterhin unverändert gegen ihren eigenen Producer und Basisvertrag neu validiert.
+
+Original deklarierte Reporting-Implementierung, tatsächliche Native-Implementierung und tatsächliche Generic-FPS-Runtimebindung werden getrennt erhalten. Die Generic-Ausführung muss den aktuellen Quality-Postprocessor binden; die frühere Native-Ausführung muss ihre bekannte ursprüngliche Deklaration binden. Nur der vorhandene geprüfte Rev3-Reportingübergang und bereits verifizierte abgeleitete Siegel beziehungsweise Quellenbeobachtungen dürfen bei sonst exakt gleicher Wissenschaft abweichen. Fehlende Joinfelder oder ursprüngliche Attestationsbodies werden nicht ergänzt; historische Postflight-Belege bleiben historische Postflight-Belege. H10-/Raw-Head- und andere unbelegte Familien werden durch diese Ergänzung nicht zugelassen.
+
+Validierung: 50 gezielte Softwaretests bestanden, einschließlich unveränderter früherer H8-Fälle, eines synthetischen gepaarten Imports mit unveränderten übrigen 419 Zeilen sowie negativer Artefakt-, Input-, Runtime-, Methoden-, Ownership- und Originalreport-Pinfälle. Die drei tatsächlichen abgeschlossenen DeepX-Qualitätsfälle bestehen zusätzlich ihre vollständige normale Quality-Eigenbasisprüfung und strenge Operatorrelation im geschlossenen Quellenprüfbereich; es wurde dabei kein Ledger importiert oder projiziert. Keine Hardware, Inferenz, Statistikneuberechnung, Source-Ausführung oder CURRENT-Übernahme durch diese Produktänderung; eingefrorene Runtime-/Measurementquellen bleiben unverändert.

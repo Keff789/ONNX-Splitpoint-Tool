@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2413,
+  "file_count": 2414,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 528703,
-      "sha256": "7883d8dbb5c304d5a105b18f1b1a7882f84cc5aa342d092a504cb15a0abf7eeb"
+      "size": 531644,
+      "sha256": "baf272bc995f551c320b7675edb38b763c1056a0510eaa7c2876b21ea54c196d"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3226,8 +3226,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/historical_quality_import.py",
-      "size": 20783,
-      "sha256": "a13ff65426c1b92ec941f738967058cd2444e2389c3dc24755989d9d0859b7f4"
+      "size": 31282,
+      "sha256": "d0c8d01dae99624223b8b64e25f591aefe616dc769074ab00aef56af7dcba076"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/jobs.py",
@@ -7863,6 +7863,11 @@
       "path": "tests/test_hardware_acceptance_native.py",
       "size": 44942,
       "sha256": "d06d6aaffbea6ccec8dba985cbd91b3502bd422dbb2fed713bb65c342332bd6e"
+    },
+    {
+      "path": "tests/test_historical_paired_quality_import.py",
+      "size": 12543,
+      "sha256": "53c4dfdc7884ef1df5f8fb908b4667ca4e5c4daece3c049d22d11a6382923c41"
     },
     {
       "path": "tests/test_historical_quality_import.py",

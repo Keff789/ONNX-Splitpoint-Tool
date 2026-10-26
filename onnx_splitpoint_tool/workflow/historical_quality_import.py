@@ -13,9 +13,11 @@ from typing import Any, Mapping, Sequence
 
 from .. import generic_only_plan as quality_admission
 from ..generic_completion_plan import completion_identity
+from ..native_performance_identity import canonical_native_backend
 from ..native_detection_postprocess import (
     _REV3_REPORTING_COMPATIBLE_IMPLEMENTATIONS,
     _implementation_artifacts,
+    canonical_json_sha256,
     verify_detection_completion_execution_contract,
 )
 from ..native_three_stage import verify_fast_completion_attestation
@@ -120,10 +122,99 @@ def _postflight(raw, contract, *, count, prepared_sha=None, source_image_sha=Non
     return proof
 
 
+def _runtime_postprocessor(binding):
+    before = binding.get("before") or {}
+    _need(binding.get("unchanged") is True and before and before == binding.get("after"),
+          "actual runtime source binding differs")
+    values = [value for path, value in before.items()
+              if path.endswith("/native_detection_postprocess.py")]
+    _need(len(values) == 1, "actual postprocessor source is absent or ambiguous")
+    return _sha(values[0])
+
+
+def _paired_artifacts(target, identity, artifacts):
+    """Read the already admitted paired row's original, sealed authorities."""
+    authority = target.get("actual_artifact_authority") or {}
+    _need(authority.get("authority_kind") == "prior_normal_product_single_input_plan_identity"
+          and authority.get("source_identity") == identity,
+          "paired original artifact authority differs")
+    prior = _json(authority.get("source_plan"))
+    index = authority.get("source_row_index")
+    _need(type(index) is int and 0 <= index < len(prior.get("rows") or []),
+          "paired original source row missing")
+    row = prior["rows"][index]
+    _need(row.get("identity") == identity and row.get("model_sha256") == target.get("model_sha256"),
+          "paired original source identity differs")
+    for role in ("part1_runtime", "engine", "source_part2_onnx", "build_part2_onnx",
+                 "boundary_metadata", "engine_build_receipt"):
+        _same_artifact((authority.get("bound_runtime_artifacts") or {}).get(role), artifacts.get(role), role)
+        _same_artifact((row.get("expected_runtime_artifacts") or {}).get(role), artifacts.get(role), role)
+    source = (target.get("source_authorities") or {}).get("cache_inventory") or {}
+    selector = source.get("selector") or {}
+    _need(selector == {"backend": identity["comparison_backend"], "model_id": identity["model_id"],
+                       "case_id": identity["case_id"]}, "paired cache selector differs")
+    cache = _json(source)  # The existing normal reader enforces one exact selector match.
+    _need(canonical_json_sha256(cache) == source.get("canonical_row_sha256"),
+          "paired cache row changed")
+    _same_artifact(cache.get("part1_receipt"), artifacts.get("part1_build_receipt"), "part1_build_receipt")
+    receipt = _json(artifacts["part1_build_receipt"])
+    _need(receipt.get("ok") is True and receipt.get("dxnn_sha256") == artifacts["part1_runtime"]["sha256"]
+          and receipt.get("source_onnx_sha256") == artifacts["source_part1_onnx"]["sha256"]
+          == (cache.get("source_part1_onnx") or {}).get("declared_sha256"),
+          "paired compiled/source Part1 receipt differs")
+    _same_artifact({"sha256": receipt["source_onnx_sha256"],
+                    "size_bytes": (cache.get("source_part1_onnx") or {}).get("size_bytes")},
+                   artifacts.get("source_part1_onnx"), "source_part1_onnx")
+
+
+def _paired_input(native, command, artifacts, prepared, completed):
+    """Prove the original DeepX byte feed and owned typed FIFO boundary."""
+    metadata = _json(artifacts["boundary_metadata"])
+    tensor = metadata.get("boundary_tensor") or {}
+    observed = native.get("strict_quality_boundary") or {}
+    selection = native.get("input_selection") or {}
+    feed = native.get("timing_input_binding") or {}
+    comparison = completed.get("representative_input_comparison") or {}
+    rgb = comparison.get("prepared_tensor") or {}
+    input_contract = tensor.get("deepx_input_contract") or {}
+    _need(metadata.get("backend") == "deepx_to_trt" and metadata.get("boundary_tensor_count") == 1
+          and all(metadata.get(a) == command.get(b) for a, b in (
+              ("model_id", "model"), ("case_id", "case"), ("setup_id", "setup_id")))
+          and metadata.get("boundary_transform") == "identity" and metadata.get("boundary_layout") == "as_input"
+          and observed.get("status") == "exact_runtime_boundary_verified"
+          and observed.get("binding_boundary_metadata_sha256") == metadata.get("metadata_sha256")
+          and observed.get("output_count") == 1 and observed.get("runtime_name") == tensor.get("runtime_name")
+          and observed.get("shape") == tensor.get("canonical_part2_shape")
+          and observed.get("dtype") == tensor.get("dtype") == "float32"
+          and native.get("fifo_payload_ownership") == "owned_no_alias_to_deepx_runtime_output"
+          and native.get("boundary_copy_count") == 1
+          and native.get("boundary_copy_policy") == "one_owned_contiguous_typed_copy_before_fifo_enqueue",
+          "paired owned typed boundary differs")
+    _need(selection.get("selection_method") == "quality_bound_exact_input_contract_no_probe_or_fallback"
+          and selection.get("selected_shape") == prepared.get("shape")
+          and selection.get("selected_dtype") == prepared.get("dtype") == "uint8"
+          and prepared.get("format") == "npy"
+          and selection.get("source_input_contract") == input_contract
+          and input_contract.get("dtype") == "uint8" and input_contract.get("layout") == "HWC"
+          and input_contract.get("shape") == prepared.get("shape")
+          and (command.get("artifacts", {}).get("prepared_input") or {}).get("sha256") == prepared.get("sha256")
+          and rgb.get("dtype") == prepared.get("dtype") and rgb.get("shape") == prepared.get("shape")
+          and (comparison.get("actual_runtime_input") or {}).get("images") == rgb
+          and feed.get("canonical_rgb_sha256") == _sha(rgb.get("tensor_sha256"))
+          and feed.get("sequence") == "single_exact_prepared_feed_repeated"
+          and feed.get("preprocessing_timed") is False,
+          "paired exact prepared input differs")
+    return rgb["tensor_sha256"]
+
+
 def _admit(target, binding):
     _need(type(binding) is HistoricalQualityImport, "explicit typed historical import required")
-    _need(target.get("prior_generic_sourceversion_reuse_admitted") is True
-          and target.get("admission_mode") == "reused_prior_generic_sourceversion_h8",
+    paired = (target.get("prior_paired_reuse_admitted") is True
+              and target.get("admission_mode") == "reused_prior_paired"
+              and target.get("observation_mode") == "original_paired_completion")
+    generic = (target.get("prior_generic_sourceversion_reuse_admitted") is True
+               and target.get("admission_mode") == "reused_prior_generic_sourceversion_h8")
+    _need(generic != paired,
           "target is not an admitted historical Generic FPS row")
     sources = target.get("source_authorities") or {}
     _need(sources.get("reused_original_result") == binding.fps_result
@@ -133,14 +224,18 @@ def _admit(target, binding):
         binding.fps_result, binding.fps_plan, binding.native_record, binding.quality_config))
     identity = fps.get("identity") or {}
     key = completion_identity(identity)
+    setup, direction, backend = ("DeepX", "deepx_to_trt", "deepx") if paired else ("H8", "hailo8_to_trt", "hailo8")
     _need(completion_identity(target.get("full_product_identity") or {}) == key
           and target.get("full_product_identity") == identity
-          and identity.get("direction") == "hailo8_to_trt"
+          and identity.get("direction") == direction and identity.get("comparison_backend") == backend
           and target.get("generic_uid") == "|".join(("generic", identity["model_id"],
-              "H8", identity["direction"], identity["case_id"]))
+              setup, identity["direction"], identity["case_id"]))
           and target.get("model_id") == identity["model_id"]
           and target.get("case_id") == identity["case_id"],
           "target/FPS physical identity differs")
+    if paired:
+        _need(sources.get("prior_paired_ledger_id") == "A|" + target["generic_uid"],
+              "paired original admission identity differs")
     matches = [r for r in plan.get("rows", []) if isinstance(r, Mapping)
                and r.get("identity") == identity]
     _need(len(matches) == 1, "original FPS plan row absent or ambiguous")
@@ -148,6 +243,18 @@ def _admit(target, binding):
     _need(original.get("result_path") == binding.fps_result.get("path")
           and original.get("native_source") == binding.native_record.get("path"),
           "actual historical backing differs from the original plan")
+    if paired:
+        records = (original.get("fresh_native_cohort") or {}).get("rows") or []
+        selected = [r for r in records if isinstance(r, Mapping)
+                    and r.get("raw_report") == binding.native_record.get("path")]
+        _need(len(selected) == 1
+              and _sha(selected[0].get("raw_report_sha256")) == binding.native_record.get("sha256"),
+              "paired original Native report body pin differs")
+        size = selected[0].get("raw_report_size_bytes")
+        if size is not None:
+            _need(type(size) is int and size > 0
+                  and quality_admission.read_bound(binding.native_record).stat().st_size == size,
+                  "paired original Native report size differs")
     runtime = original.get("runtime_config") or {}
     _need(fps.get("status") == "ok" and fps.get("task") == "detection"
           and fps.get("measurement_mode") == "generic_completed_task"
@@ -172,19 +279,26 @@ def _admit(target, binding):
           "scientific completed operator parameters differ")
 
     qrow = deepcopy(binding.quality_row)
+    q_identity = qrow.get("identity") or {}
+    config_identity = config.get("identity") or {}
     _need(qrow.get("completion_contract") == q_contract
           and qrow.get("generic_artifact_binding") == config.get("generic_artifact_binding")
-          and all(qrow.get("identity", {}).get(k) == identity[k]
-                  and config.get("identity", {}).get(k) == identity[k]
-                  for k in ("model_id", "case_id", "setup_id", "comparison_backend", "precision")),
+          and all(q_identity.get(k) == config_identity.get(k) == identity[k]
+                  for k in ("model_id", "case_id", "setup_id", "precision"))
+          and q_identity.get("comparison_backend") == config_identity.get("comparison_backend")
+          and (canonical_native_backend(config_identity.get("comparison_backend")) == backend
+               if paired else config_identity.get("comparison_backend") == backend),
           "Quality own base/config/physical identity differs")
     q_artifacts = (config.get("generic_artifact_binding") or {}).get("artifacts") or {}
     authority = target.get("actual_artifact_authority") or {}
-    for role, value in (("source_part1_onnx", authority.get("source_part1_onnx")),
-                        ("source_part2_onnx", authority.get("source_part2_onnx")),
-                        ("part1_runtime", authority.get("part1")),
-                        ("engine", (authority.get("part2_engine_observation") or {}).get("artifact"))):
-        _same_artifact(value, q_artifacts.get(role), role)
+    if paired:
+        _paired_artifacts(target, identity, q_artifacts)
+    else:
+        for role, value in (("source_part1_onnx", authority.get("source_part1_onnx")),
+                            ("source_part2_onnx", authority.get("source_part2_onnx")),
+                            ("part1_runtime", authority.get("part1")),
+                            ("engine", (authority.get("part2_engine_observation") or {}).get("artifact"))):
+            _same_artifact(value, q_artifacts.get(role), role)
     old_artifacts = original.get("expected_runtime_artifacts") or {}
     for role in ("part1_runtime", "engine", "source_part2_onnx", "build_part2_onnx", "boundary_metadata"):
         _same_artifact(old_artifacts.get(role), q_artifacts.get(role), role)
@@ -231,22 +345,46 @@ def _admit(target, binding):
               ("model", "model_id"), ("case", "case_id"), ("setup_id", "setup_id"),
               ("precision", "precision"), ("comparison_backend", "comparison_backend"), ("backend", "direction"))),
           "Native original command binding differs")
-    for native_role, role in (("hef", "part1_runtime"), ("engine", "engine")):
+    for native_role, role in ((("dxnn" if paired else "hef"), "part1_runtime"), ("engine", "engine")):
         _same_artifact(command.get("artifacts", {}).get(native_role), q_artifacts.get(role), native_role)
+    if paired:
+        for role in ("boundary_metadata", "source_part2_onnx", "build_part2_onnx", "engine_build_receipt"):
+            _same_artifact(command.get("artifacts", {}).get(role), q_artifacts.get(role), role)
     feed = native.get("timing_input_binding") or {}
-    _need(feed.get("canonical_rgb_sha256") == prepared["sha256"]
+    prepared_tensor_sha = (_paired_input(native, command, q_artifacts, prepared,
+                           quality["completed_quality_binding"]) if paired else prepared["sha256"])
+    _need(feed.get("canonical_rgb_sha256") == prepared_tensor_sha
           and feed.get("input_image_sha256") == image_sha
           and feed.get("preprocessing_contract_sha256") == preprocessing
-          and feed.get("executed_rgb_matches_common_preprocessing") is True,
+          and (paired or feed.get("executed_rgb_matches_common_preprocessing") is True),
           "owned Native input/preprocessing backing differs")
     count = runtime.get("task_count")
     warmup = runtime.get("warmup_count")
+    native_method = original.get("native_measurement_boundary") or {}
+    if paired:
+        _need(isinstance(native_method, Mapping)
+              and native_method.get("task") == "detection"
+              and native_method.get("completion_mode") == fps_contract["completion_mode"]
+              and native_method.get("native_command_contract_sha256") == command["contract_sha256"]
+              and native_method.get("measured_task_count") == count
+              and native_method.get("warmup_count") == warmup
+              and native_method.get("repetitions") == runtime.get("repetitions")
+              and native_method.get("process_repetition_policy") == "separate_processes"
+              and native_method.get("timer_start") == "workers_ready_before_first_prepared_input_admission"
+              and native_method.get("timer_end") == "last_required_task_completion_after_synchronized_host_output_and_task_postprocess"
+              and native_method.get("preprocessing_included") is False
+              and all(native_method.get(k) is True for k in (
+                  "host_device_transfers_included", "handoff_included", "output_materialization_included",
+                  "pipeline_fill_included", "pipeline_drain_included", "warmup_fully_completed_and_drained_before_timer")),
+              "paired original Native method differs")
     _need(type(count) is int and count > 0 and type(warmup) is int and warmup >= 0
           and native.get("completed_work_units") == native.get("requested_frames") == count
           and native.get("frames") == count and native.get("warmup") == warmup
           and native.get("postprocess_completed_frames") == count
           and native.get("postprocess_completion_verified") is True
-          and native.get("completed_work_units_status") == "exact_runtime_counter",
+          and ((not paired and native.get("completed_work_units_status") == "exact_runtime_counter")
+               or (paired and native.get("completed_frames") == count
+                   and native.get("measurement_boundary") == "workers_ready_to_last_completed_task_frame")),
           "Native owned capture/count backing differs")
     native_proof = _postflight(native.get("completion_execution_attestation"), fps_contract,
                               count=count, source_image_sha=image_sha)
@@ -258,6 +396,12 @@ def _admit(target, binding):
     source_files = runtime.get("runtime_source_files") or []
     source_map = {item["path"]: _sha(item.get("sha256")) for item in source_files}
     _need(source_map and len(source_map) == len(source_files), "original runtime source closure missing")
+    native_implementation = None
+    actual_implementation = None
+    if paired:
+        native_implementation = _runtime_postprocessor(native.get("completion_runtime_source_binding") or {})
+        _need(native_implementation == left_impl,
+              "Native actual postprocessor differs from its declared historical implementation")
     for index, rep in enumerate(reps, 1):
         process = (rep.get("boot_id"), rep.get("pid"), rep.get("process_start_ticks"))
         instance = rep.get("runtime_instance_id")
@@ -282,6 +426,10 @@ def _admit(target, binding):
         _need(source_binding.get("unchanged") is True
               and source_binding.get("before") == source_binding.get("after") == source_map,
               "accepted FPS original runtime source closure differs")
+        if paired:
+            actual_implementation = _runtime_postprocessor(source_binding)
+            _need(actual_implementation == right_impl,
+                  "accepted FPS actual postprocessor differs from current Quality implementation")
         for role in ("part1_runtime", "engine"):
             _need(_artifact((rep.get("runtime_artifacts") or {}).get(role))[0]
                   == _artifact(q_artifacts.get(role))[0], "FPS repetition artifact differs: " + role)
@@ -307,6 +455,14 @@ def _admit(target, binding):
         "original_quality_admission": deepcopy(binding.quality_admission),
         "quality_request_sha256": quality["request_sha256"], "quality_result_sha256": quality["result_sha256"],
         "quality_status": quality["status"], "quality_eligible": quality["quality_eligible"]}
+    if paired:
+        relation["original_paired_admission_preserved"] = True
+        relation["runtime_reporting_provenance"] = {
+            "fps_declared_postprocessor_sha256": left_impl,
+            "fps_actual_postprocessor_sha256": actual_implementation,
+            "native_actual_postprocessor_sha256": native_implementation,
+            "quality_postprocessor_sha256": right_impl,
+            "original_contract_rewritten": False}
     return result, quality, relation
 
 
