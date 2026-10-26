@@ -76,8 +76,10 @@ def _same_artifact(left, right, role):
 def _operator(contract, *, model_sha256):
     """Remove only verified derived seals and explicitly separate context."""
     value = deepcopy(verify_detection_completion_execution_contract(contract))
-    _need(value["completion_mode"] == "decoded_nms_attested_materialization_no_second_nms"
-          and value["source_endpoint"]["stage"] == "decoded_nms",
+    _need((value["completion_mode"], value["source_endpoint"]["stage"]) in {
+              ("decoded_nms_attested_materialization_no_second_nms", "decoded_nms"),
+              ("decoded_pre_nms_frozen_nms", "decoded_pre_nms"),
+              ("raw_head_frozen_decode_nms", "raw_head")},
           "historical operator family unsupported")
     for key in ("contract_sha256", "hash_layers", "implementation_sha256",
                 "schema_sha256", "relation_sha256"):
@@ -88,12 +90,18 @@ def _operator(contract, *, model_sha256):
     source.pop("output_endpoint_attestation_sha256")
     processor = value["processor_contract"]
     processor.pop("contract_sha256")
-    processor.pop("source_output_endpoint_attestation_sha256")
+    processor.pop("source_output_endpoint_attestation_sha256", None)
+    # The ordinary contract verifier has recomputed these nested identities.
+    # Their scientific fields remain in processor itself below.
+    processor.pop("invariant_identity", None)
+    processor.pop("invariant_contract_sha256", None)
     # The caller has already admitted the exact existing Rev3 reporting pair.
     processor["implementation_artifacts"]["native_detection_postprocess"]["sha256"] = "reporting-compatible-rev3"
     completed = value["completed_endpoint_contract"]
     for key in ("endpoint_contract_hash", "materialization_contract_sha256", "output_endpoint_id"):
-        completed.pop(key)
+        completed.pop(key, None)
+    for key in ("frozen_postprocess_contract_sha256", "frozen_postprocess_invariant_contract_sha256"):
+        completed.pop(key, None)
     return value
 
 
@@ -151,15 +159,25 @@ def _paired_artifacts(target, identity, artifacts):
         _same_artifact((row.get("expected_runtime_artifacts") or {}).get(role), artifacts.get(role), role)
     source = (target.get("source_authorities") or {}).get("cache_inventory") or {}
     selector = source.get("selector") or {}
-    _need(selector == {"backend": identity["comparison_backend"], "model_id": identity["model_id"],
+    cache_backend = "h10" if identity["comparison_backend"] == "hailo10h" else identity["comparison_backend"]
+    _need(selector == {"backend": cache_backend, "model_id": identity["model_id"],
                        "case_id": identity["case_id"]}, "paired cache selector differs")
     cache = _json(source)  # The existing normal reader enforces one exact selector match.
     _need(canonical_json_sha256(cache) == source.get("canonical_row_sha256"),
           "paired cache row changed")
     _same_artifact(cache.get("part1_receipt"), artifacts.get("part1_build_receipt"), "part1_build_receipt")
     receipt = _json(artifacts["part1_build_receipt"])
-    _need(receipt.get("ok") is True and receipt.get("dxnn_sha256") == artifacts["part1_runtime"]["sha256"]
-          and receipt.get("source_onnx_sha256") == artifacts["source_part1_onnx"]["sha256"]
+    if identity["comparison_backend"] == "hailo10h":
+        _need(receipt.get("schema") == "onnx-splitpoint/hailo-hef-build-receipt/v2"
+              and canonical_native_backend(receipt.get("hw_arch")) == "hailo10h"
+              and receipt.get("hef_sha256") == artifacts["part1_runtime"]["sha256"]
+              and receipt.get("hef_size_bytes") == artifacts["part1_runtime"]["size_bytes"],
+              "paired original HEF receipt differs")
+    else:
+        _need(receipt.get("ok") is True
+              and receipt.get("dxnn_sha256") == artifacts["part1_runtime"]["sha256"],
+              "paired original DXNN receipt differs")
+    _need(receipt.get("source_onnx_sha256") == artifacts["source_part1_onnx"]["sha256"]
           == (cache.get("source_part1_onnx") or {}).get("declared_sha256"),
           "paired compiled/source Part1 receipt differs")
     _same_artifact({"sha256": receipt["source_onnx_sha256"],
@@ -207,6 +225,58 @@ def _paired_input(native, command, artifacts, prepared, completed):
     return rgb["tensor_sha256"]
 
 
+def _paired_hailo_input(native, command, config, prepared, completed):
+    """Prove the original uint8 feed and already sealed transformed engine."""
+    from ..native_split_quality import validate_native_split_quality_binding
+    reference = config.get("existing_part2_bridge") or {}
+    source = reference.get("binding_source") or {}
+    _need(source.get("pointer") == "/native_split_quality_binding", "paired bridge source differs")
+    container = _json(source)
+    identity = config["identity"]
+    bridge, status = validate_native_split_quality_binding(container.get("native_split_quality_binding"),
+        verification_mode="portable", expected_identity={"model": identity["model_id"],
+            "case": identity["case_id"], "setup_id": identity["setup_id"],
+            "task": "detection", "backend": identity["comparison_backend"],
+            "precision": identity["precision"]})
+    _need(bridge is not None and bridge["binding_sha256"] == reference.get("binding_sha256")
+          and bridge["preselection"]["policy_sha256"] == reference.get("policy_sha256")
+          and reference.get("precision") == "uint8_dequant_fp16", "paired original bridge differs: " + status)
+    for role in ("part1_runtime", "boundary_metadata", "source_part2_onnx", "build_part2_onnx",
+                 "engine", "engine_build_receipt"):
+        _same_artifact(bridge["artifacts"].get(role), config["generic_artifact_binding"]["artifacts"].get(role), role)
+    boundary = bridge["boundary_contract"]
+    actual = native.get("boundary_contract") or {}
+    options = command.get("runtime_options") or {}
+    shape = boundary.get("boundary_tensor_shape")
+    _need(isinstance(shape, list) and shape and all(type(n) is int and n > 0 for n in shape)
+          and boundary.get("boundary_tensor_dtype") == native.get("trt_input_dtype") == "uint8"
+          and native.get("trt_inputs") == [boundary.get("boundary_tensor_name")]
+          and native.get("trt_input_bytes") == math.prod(shape)
+          and type(native.get("boundary_copy_count")) is int and native["boundary_copy_count"] == 1
+          and native.get("boundary_copy_policy") == "single_owned_contiguous_copy_from_reusable_accelerator_binding"
+          and native.get("trt_copy_outputs") is True
+          and native.get("measurement_boundary") == "workers_ready_to_last_completed_task_frame"
+          and actual.get("bridge_schema") == "onnx-splitpoint/uint8-dequant-bridge"
+          and actual.get("metadata_sha256") == bridge["artifacts"]["native_trt_meta"]["sha256"]
+          and actual.get("boundary_layout_effective") == native.get("boundary_layout") == boundary.get("boundary_layout")
+          and all(actual.get(key) == boundary.get(key) for key in ("dequant_scale", "dequant_zero_point"))
+          and options.get("quantized_inputs") is True and options.get("quantized_outputs") is True
+          and options.get("copy_outputs") is True,
+          "paired original owned Hailo bridge boundary differs")
+    comparison = completed.get("representative_input_comparison") or {}
+    rgb = comparison.get("prepared_tensor") or {}
+    _need(prepared.get("format") == "npy" and prepared.get("dtype") == rgb.get("dtype") == "uint8"
+          and rgb.get("shape") == prepared.get("shape")
+          and (comparison.get("actual_runtime_input") or {}).get("images") == rgb
+          and options.get("runtime_input_shapes") == {"images": prepared.get("shape")}
+          and options.get("runtime_output_shapes") == {boundary["boundary_tensor_name"]: shape}
+          and options.get("canonical_input_slot_names") == ["images"]
+          and options.get("canonical_output_slot_names") == [boundary["boundary_tensor_name"]]
+          and (command.get("artifacts", {}).get("prepared_input_00") or {}).get("sha256") == prepared.get("sha256"),
+          "paired original Hailo prepared input differs")
+    return _sha(rgb.get("tensor_sha256"))
+
+
 def _admit(target, binding):
     _need(type(binding) is HistoricalQualityImport, "explicit typed historical import required")
     paired = (target.get("prior_paired_reuse_admitted") is True
@@ -224,7 +294,12 @@ def _admit(target, binding):
         binding.fps_result, binding.fps_plan, binding.native_record, binding.quality_config))
     identity = fps.get("identity") or {}
     key = completion_identity(identity)
-    setup, direction, backend = ("DeepX", "deepx_to_trt", "deepx") if paired else ("H8", "hailo8_to_trt", "hailo8")
+    paired_backends = {("deepx_to_trt", "deepx"): ("DeepX", "deepx_to_trt", "deepx"),
+                       ("hailo10h_to_trt", "hailo10h"): ("H10", "hailo10h_to_trt", "hailo10h")}
+    selected_backend = paired_backends.get((identity.get("direction"), identity.get("comparison_backend")))
+    _need(not paired or selected_backend is not None, "paired backend unsupported")
+    setup, direction, backend = selected_backend if paired else ("H8", "hailo8_to_trt", "hailo8")
+    hailo_paired = paired and backend == "hailo10h"
     _need(completion_identity(target.get("full_product_identity") or {}) == key
           and target.get("full_product_identity") == identity
           and identity.get("direction") == direction and identity.get("comparison_backend") == backend
@@ -264,6 +339,8 @@ def _admit(target, binding):
           "original FPS measurement/input method differs")
     fps_contract = verify_detection_completion_execution_contract(fps.get("completion_contract"))
     q_contract = verify_detection_completion_execution_contract(config.get("completion_contract"))
+    _need(not hailo_paired or fps_contract["completion_mode"] == "raw_head_frozen_decode_nms",
+          "paired Hailo operator family unsupported")
     _need(runtime.get("completion_contract") == fps_contract
           and original.get("completion_contract") == fps_contract,
           "original FPS frozen contract differs")
@@ -345,14 +422,16 @@ def _admit(target, binding):
               ("model", "model_id"), ("case", "case_id"), ("setup_id", "setup_id"),
               ("precision", "precision"), ("comparison_backend", "comparison_backend"), ("backend", "direction"))),
           "Native original command binding differs")
-    for native_role, role in ((("dxnn" if paired else "hef"), "part1_runtime"), ("engine", "engine")):
+    for native_role, role in ((("dxnn" if paired and not hailo_paired else "hef"), "part1_runtime"), ("engine", "engine")):
         _same_artifact(command.get("artifacts", {}).get(native_role), q_artifacts.get(role), native_role)
     if paired:
         for role in ("boundary_metadata", "source_part2_onnx", "build_part2_onnx", "engine_build_receipt"):
             _same_artifact(command.get("artifacts", {}).get(role), q_artifacts.get(role), role)
     feed = native.get("timing_input_binding") or {}
-    prepared_tensor_sha = (_paired_input(native, command, q_artifacts, prepared,
-                           quality["completed_quality_binding"]) if paired else prepared["sha256"])
+    prepared_tensor_sha = (_paired_hailo_input(native, command, config, prepared,
+                              quality["completed_quality_binding"]) if hailo_paired else
+                          _paired_input(native, command, q_artifacts, prepared,
+                              quality["completed_quality_binding"]) if paired else prepared["sha256"])
     _need(feed.get("canonical_rgb_sha256") == prepared_tensor_sha
           and feed.get("input_image_sha256") == image_sha
           and feed.get("preprocessing_contract_sha256") == preprocessing
@@ -382,8 +461,8 @@ def _admit(target, binding):
           and native.get("frames") == count and native.get("warmup") == warmup
           and native.get("postprocess_completed_frames") == count
           and native.get("postprocess_completion_verified") is True
-          and ((not paired and native.get("completed_work_units_status") == "exact_runtime_counter")
-               or (paired and native.get("completed_frames") == count
+          and (((not paired or hailo_paired) and native.get("completed_work_units_status") == "exact_runtime_counter")
+               or (paired and not hailo_paired and native.get("completed_frames") == count
                    and native.get("measurement_boundary") == "workers_ready_to_last_completed_task_frame")),
           "Native owned capture/count backing differs")
     native_proof = _postflight(native.get("completion_execution_attestation"), fps_contract,

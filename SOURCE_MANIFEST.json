@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2416,
+  "file_count": 2417,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 537751,
-      "sha256": "ef76a2fd4bb9d242341d201d2fe2fbd9806a79206aa65cdbefe8f275a74cd0e3"
+      "size": 540426,
+      "sha256": "a871524a0a63785213196af736e7c7a0288c3e3d60a0d615c9f7beb563650e9f"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3226,8 +3226,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/historical_quality_import.py",
-      "size": 31282,
-      "sha256": "d0c8d01dae99624223b8b64e25f591aefe616dc769074ab00aef56af7dcba076"
+      "size": 37108,
+      "sha256": "bfbea759480dc01759661f5baa442cb259fecd4bbddc617279faa31526f98a3e"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/jobs.py",
@@ -7873,6 +7873,11 @@
       "path": "tests/test_hardware_acceptance_native.py",
       "size": 44942,
       "sha256": "d06d6aaffbea6ccec8dba985cbd91b3502bd422dbb2fed713bb65c342332bd6e"
+    },
+    {
+      "path": "tests/test_historical_hailo_quality_import.py",
+      "size": 8869,
+      "sha256": "9c5d7629d6c045902245c4dcbf4a5a6cc13219f0c59786e2e5f3c800f70dc73a"
     },
     {
       "path": "tests/test_historical_paired_quality_import.py",
