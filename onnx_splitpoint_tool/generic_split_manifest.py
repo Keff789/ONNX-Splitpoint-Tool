@@ -688,8 +688,10 @@ def _validate_generic_split_manifest_staging(
         backend_fields = {"backend_terminal_states", "case_variant_availability", "config", "hefs"}
         full_fields = {"full_end_node_names", "full_endpoint_mode", "full_output_contract"}
         _require(set(original["hailo"]) in (backend_fields, backend_fields | full_fields)
-                 and set(staged["hailo"]) == backend_fields | {"builds_deferred_until_cache_preflight"}
-                 and staged["hailo"]["builds_deferred_until_cache_preflight"] is True
+                 and set(staged["hailo"]) in (backend_fields,
+                     backend_fields | {"builds_deferred_until_cache_preflight"})
+                 and ("builds_deferred_until_cache_preflight" not in staged["hailo"]
+                      or staged["hailo"]["builds_deferred_until_cache_preflight"] is True)
                  and set(staged["hailo"]["hefs"]) <= {"hailo8", "hailo10"}
                  and set(staged["hailo"]["case_variant_availability"]) ==
                      ({"hailo8", "hailo10h"} if "hailo10" in staged["hailo"]["hefs"] else {"hailo8"}),
@@ -775,6 +777,31 @@ def _validate_generic_split_manifest_staging(
                 fields = {"cache_hit", "cache_key", "context_mode", "elapsed_s", "mapping_failed",
                     "multi_context_used", "ok", "single_context_failed", "single_context_used",
                     "skipped", "timed_out", "watchdog_expired"}
+                if set(new_build) != fields:
+                    _require(set(new_hef) == {"part1", "part1_build"}
+                             and new_build.get("cache_hit") is True
+                             and new_build.get("ok") is True and new_build.get("skipped") is True,
+                             "unproved positive unused H10 import reuse record")
+                    staged_reuse = _positive_original_build(new_build, staged, arch=arch,
+                        model=model, case=case, bindings=bindings,
+                        full_model_sha256=full_model_sha256, prepared=prepared)
+                    _require(staged_reuse.get("historical_reuse_observation") is True
+                             and ("cache_key" not in new_build
+                                  or ("cache_key" not in old_build
+                                      or new_build["cache_key"] == old_build["cache_key"])),
+                             "unused H10 reuse record cache identity conflicts")
+                    retained_historical_build_metadata.append({**proof,
+                        "build_record_unchanged": False,
+                        "staged_unexecuted_reuse_record": deepcopy(new_build),
+                        "staged_reuse_record_provenance": staged_reuse,
+                        "staged_cache_key_status": "unverified_unused_reuse_metadata",
+                        "staged_cache_key_verified": False,
+                        "current_compile_claimed": False, "current_reuse_claimed": False})
+                    permit(("hailo", "hefs", arch, "part1_build"),
+                           "positive unused H10 reuse metadata; original history retained without a current cache claim")
+                    for key in sorted(set(old_hef) & _FULL_FIELDS):
+                        permit(("hailo", "hefs", arch, key), "unexecuted H10 Full metadata remains in original authority")
+                    continue
                 # An old positive reuse observation can predate cache-key
                 # recording. Its new unused-backend summary is not authority
                 # for a cache hit: retain that extra key explicitly unverified.

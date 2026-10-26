@@ -1,3 +1,30 @@
+## 26.10.2026 — Gebundene ungenutzte Backendmetadaten beim H8-Import
+
+Der reale H8-Import eines bereits gemessenen Schnitts enthielt keinen neueren
+Deferred-Marker und bewahrte einen positiven historischen H10-Reuseeintrag
+neben einem ausschließlich Full betreffenden H10-Alias. Der normale Validator
+akzeptiert diese bekannten Formen jetzt nur im bereits streng belegten
+Original-H8-Hintzweig. Ein vorhandener Deferred-Marker muss weiterhin exakt
+`true` sein. Der ungenutzte H10-Eintrag durchläuft die vorhandene positive
+Historienprüfung; bekannte widersprüchliche Cachekeys und negative oder
+diagnostische Einträge bleiben Fehler. Die ursprüngliche Historie bleibt
+erhalten, zusätzliche ungenutzte Metadaten begründen weder aktuelle
+Cachegültigkeit noch einen aktuellen Compile- oder Reuseerfolg.
+
+Die tatsächlichen Original- und Stagingmanifeste von b105 bestehen mit eigenen
+H8-HEF-, Receipt-, P1/P2-, Input- und Boundarybindungen den vollständigen
+Validator. Alle 505 gezielten Tests einschließlich falscher Marker, negativer
+H10-Historie, fremder Pfade, Cachekonflikte, unbekannter Full-Felder und
+abweichender wissenschaftlicher Identitäten bestanden; ein begrenzter
+unabhängiger Peercheck ist CLEAR. Die bestehenden Full-Aliasguards und der
+abschließende kanonische wissenschaftliche Vergleich bleiben erhalten.
+
+Diese Korrektur betrifft den Importreader. Runtime42/37 bleiben bytegleich zur
+vorherigen Single-Feature-Veröffentlichung; gegenüber der alten F61-Messung
+wird keine Runtimegleichheit behauptet. Originale, Messungen, Quality-Ergebnisse,
+Receipts und bisherige Freezes werden nicht umgeschrieben. Keine Source-,
+Hardware-, Compiler- oder Messausführung für diese Änderung.
+
 ## 25.10.2026 — Gemeinsame unveränderliche Eingaben bei selektiven Generic-Importen
 
 Der normale Suiteimport kopierte auch die nur gelesenen Modellgraphen und

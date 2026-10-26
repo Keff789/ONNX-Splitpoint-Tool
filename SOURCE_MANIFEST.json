@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2433,
+  "file_count": 2438,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 546856,
-      "sha256": "868c204f96caa04836a55e99abd0caaec29ed339a5f52de2af3cb97b78d7a72c"
+      "size": 548573,
+      "sha256": "d831fa1ada5e0808269fc98a33e0f4aaafa62cb55829679160ea2601cc080c20"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1016,8 +1016,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_split_manifest.py",
-      "size": 70851,
-      "sha256": "44600f846de97504170f6f5a10e3e21d413e8e6796327c100f6b2a118ab3ae9c"
+      "size": 72897,
+      "sha256": "e9880cce1aaf605289267e1c8258888c8b4290f82e2e93e21f5da7a60fea62c2"
     },
     {
       "path": "onnx_splitpoint_tool/gui/__init__.py",
@@ -5660,6 +5660,26 @@
       "sha256": "f294d9c343d35b87c5490a83a3723b6d445f4c07a1452beb01a0a19ec251918c"
     },
     {
+      "path": "tests/fixtures/generic_split_manifest/b105_import_hint_bindings.json",
+      "size": 28608,
+      "sha256": "2170013c69f5ca1c4bc28a797d56a520b6487713d6f6a8289e968673ccdf3aa7"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b105_import_hint_original.json",
+      "size": 60001,
+      "sha256": "a45f31d8f3251ea45e3915d517572c8f201cb3c2fddada73857e4c8d7d9a2710"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b105_import_hint_part1_build_receipt.json",
+      "size": 10755,
+      "sha256": "25b4a44bd6d036ec7712356c4f3ef7987105081de42d222d410151e3dac4a335"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b105_import_hint_staged.json",
+      "size": 6361,
+      "sha256": "480a34d10046b40b64836667f43eab3f2d29cf32480466f6baa846a3ed8607e0"
+    },
+    {
       "path": "tests/fixtures/generic_split_manifest/b140_hint_bindings.json",
       "size": 25135,
       "sha256": "c59bd1b5a46cc632b1e442d28a212751c46eb6bcbeaa430fc6ac9b24cf480d37"
@@ -7613,6 +7633,11 @@
       "path": "tests/test_generic_h8_legacy_receipt_flags.py",
       "size": 7778,
       "sha256": "b4b751b66ae45d5c4d60947427509e70ae192053eaa7ad839f44e4e3ea6993b9"
+    },
+    {
+      "path": "tests/test_generic_h8_unused_backend_import_metadata.py",
+      "size": 4303,
+      "sha256": "314e614cea9a183abf206cd1d0b1d3feb088c2b9ce96a4328877b1619e019306"
     },
     {
       "path": "tests/test_generic_hailo_canonical_transfer.py",
