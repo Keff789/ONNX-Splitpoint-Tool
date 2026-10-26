@@ -13,9 +13,40 @@ import os
 from pathlib import Path
 import re
 import stat
+import tempfile
 
 from .generic_quality_preflight import _contained
 from ..runners.generic_quality_accounting import _binding, _stage
+
+
+def _verified_import_runtime_paths(sources, case):
+    """Prove a complete current runtime using the ordinary import writers.
+
+    These files are regenerated in the private imported suite. Their original
+    source bindings describe that new runtime, rather than the donor's older
+    runtime. Smaller legacy declarations retain the ordinary dependency path.
+    """
+    if len(sources) != 37:
+        return set()
+    from ..gui.controller import _copy_runner_lib
+    from ..split_export_runners import write_runner_skeleton_onnxruntime
+    from ..workflow.generic_quality_sidecars import _check_sources
+
+    if any(not isinstance(source, Mapping)
+           or type(source.get('size_bytes')) is not int or source['size_bytes'] < 1
+           for source in sources):
+        raise ValueError('generic_quality_transport_runtime_source_descriptor_invalid')
+    with tempfile.TemporaryDirectory(prefix='onnx-splitpoint-import-runtime-') as directory:
+        root = Path(directory)
+        _copy_runner_lib(root)
+        write_runner_skeleton_onnxruntime(str(root / case))
+        expected = {root / case / 'run_split_onnxruntime.py',
+                    *(root / 'splitpoint_runners').rglob('*.py')}
+        declared = [_contained(root, source.get('path', '')) for source in sources]
+        if len(expected) != 37 or len(set(declared)) != 37 or set(declared) != expected:
+            raise ValueError('generic_quality_transport_runtime_source_closure_changed')
+        _check_sources({'runtime_source_files': sources}, root)
+        return {path.relative_to(root).as_posix() for path in expected}
 
 
 def _inline_graphs(suite, excludes, required_graphs):
@@ -177,6 +208,8 @@ def _selected_source_excludes(suite, *, plan, active_run_ids, model_id,
                 return retain_full('original_config_dependency_metadata_unavailable')
             require(isinstance(artifacts, Mapping) and isinstance(sources, list) and sources
                     and {'source_part1_onnx', 'source_part2_onnx'} <= artifacts.keys())
+            regenerated_runtime = (_verified_import_runtime_paths(sources, case)
+                                   if source_configs else set())
             staged_assets = {}
             if source_configs:
                 from ..workflow.generic_quality_sidecars import _portable_asset_descriptors
@@ -220,6 +253,11 @@ def _selected_source_excludes(suite, *, plan, active_run_ids, model_id,
                     dependency = staged_assets[relative.as_posix()]
                 elif source_configs and not dependency.is_file():
                     return retain_full('dependency_not_materialized:' + str(relative))
+                if role is None and relative.as_posix() in regenerated_runtime:
+                    # Only the exact complete current runtime proved above is
+                    # replaced by the same writers after the private copy.
+                    # All artifact/data dependencies keep their original checks.
+                    continue
                 require(dependency.is_file()
                         and ('size_bytes' not in descriptor or dependency.stat().st_size == descriptor['size_bytes']))
             def check_paths(value):
