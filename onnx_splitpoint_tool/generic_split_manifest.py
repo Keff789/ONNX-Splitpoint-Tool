@@ -333,6 +333,93 @@ def _bind_historical_receipt(raw, build, bindings):
             "net_name": receipt["net_name"]}
 
 
+def _h8_receipt_input_authority(raw, bindings, original, staged, prepared, contract):
+    """Bind native H8 input dimensions to the own measured HEF receipt."""
+    from .build_evidence import canonical_sha256
+    from .preprocessing_contract import resolve_image_preprocessing_contract
+
+    bound = bindings["part1_build_receipt"]
+    _require(isinstance(raw, bytes) and 0 < len(raw) <= 2 * 1024**2,
+             "measured H8 input receipt required")
+    _require(len(raw) == bound["size_bytes"] and hashlib.sha256(raw).hexdigest() == bound["sha256"],
+             "measured H8 input receipt bytes differ")
+    def invalid_constant(value):
+        raise ValueError("Generic split-manifest staging: nonfinite H8 receipt constant: " + value)
+    receipt = json.loads(raw, object_pairs_hook=_object, parse_constant=invalid_constant)
+    payload = receipt.get("cache_payload") or {}
+    shape = [1, 3, *prepared["shape"][:2]]
+    _require(receipt.get("schema") == "onnx-splitpoint/hailo-hef-build-receipt/v2"
+             and receipt.get("hw_arch") == payload.get("hw_arch") == "hailo8"
+             and receipt.get("publish_artifacts") is True and receipt.get("diagnostic_only") is False
+             and receipt.get("source_onnx_sha256") == bindings["source_part1_onnx"]["sha256"]
+             and _sha(receipt.get("compiler_onnx_sha256"))
+             and payload.get("model_sha256") == receipt["compiler_onnx_sha256"]
+             and receipt.get("hef_sha256") == bindings["part1_runtime"]["sha256"]
+             and type(receipt.get("hef_size_bytes")) is int
+             and receipt["hef_size_bytes"] == bindings["part1_runtime"]["size_bytes"]
+             and receipt.get("net_name") == payload.get("net_name") == PurePosixPath(original["part1"]).stem
+             and payload.get("schema") == "onnx-splitpoint/hailo-hef-cache-key-v3"
+             and _sha(receipt.get("cache_key")) and canonical_sha256(payload) == receipt["cache_key"]
+             and payload.get("net_input_shapes") == shape
+             and all(type(dim) is int for dim in payload["net_input_shapes"]),
+             "measured H8 input receipt identity or shape differs")
+    name = prepared.get("input_name")
+    _require(isinstance(name, str) and bool(name)
+             and all(document.get("orig_inputs") == [name]
+                     and document.get("part1_external_inputs") == [name]
+                     and (document.get("io") or {}).get("part1_external_inputs") == [name]
+                     for document in (original, staged))
+             and prepared.get("format") == "raw" and prepared.get("c_contiguous") is True
+             and contract.get("task") == "detection"
+             and contract.get("normalization") == "divide_255_float32"
+             and contract.get("source_domain") == "uint8_0_255",
+             "measured H8 original input name or encoding differs")
+    preprocessing, preprocessing_sha = resolve_image_preprocessing_contract(
+        task="detection", target_hw=prepared["shape"][:2], declared=receipt.get("preprocessing_contract"))
+    _require(receipt.get("preprocessing_contract") == payload.get("preprocessing_contract")
+             == contract.get("image_preprocessing_contract") == preprocessing
+             and receipt.get("preprocessing_contract_sha256")
+             == payload.get("preprocessing_contract_sha256") == preprocessing_sha
+             and preprocessing.get("image_scale") == "norm",
+             "measured H8 preprocessing identity differs")
+    return {"authority": "bound_own_hailo8_build_receipt", "receipt": deepcopy(bound),
+            "source_part1_onnx": deepcopy(bindings["source_part1_onnx"]),
+            "hef": deepcopy(bindings["part1_runtime"]), "cache_key": receipt["cache_key"],
+            "net_name": receipt["net_name"], "net_input_shapes": shape,
+            "input_name": name, "preprocessing_contract_sha256": preprocessing_sha}
+
+
+def _positive_original_build(build, original, *, arch, model, case, bindings,
+                             full_model_sha256, prepared):
+    """Retain an actual original compile or strict successful reuse record."""
+    _require(build.get("ok") is True, "original Hailo build is not positive")
+    if build.get("cache_hit") is False and build.get("skipped") is False:
+        return _historical_build_provenance(build, original, arch=arch, model=model, case=case,
+            source_sha256=bindings["source_part1_onnx"]["sha256"],
+            full_model_sha256=full_model_sha256, prepared=prepared)
+    fields = {"build_receipt_path", "cache_hit", "calib_source", "compiler_onnx_path",
+        "context_mode", "elapsed_s", "mapping_failed", "multi_context_used", "ok",
+        "single_context_failed", "single_context_used", "skipped", "source_onnx_path",
+        "timed_out", "watchdog_expired"}
+    source = PurePosixPath(str(build.get("source_onnx_path") or ""))
+    _require(set(build) in (fields, fields | {"cache_key"})
+             and build.get("cache_hit") is True and build.get("skipped") is True
+             and build.get("context_mode") == "skipped" and build.get("calib_source") == "validated_existing_artifact"
+             and all(build.get(key) is False for key in ("single_context_failed", "single_context_used",
+                 "multi_context_used", "mapping_failed", "timed_out", "watchdog_expired"))
+             and type(build.get("elapsed_s")) in (int, float)
+             and math.isfinite(build["elapsed_s"]) and build["elapsed_s"] >= 0
+             and source.is_absolute() and ".." not in source.parts
+             and source.parent.name == case and source.name == original["part1"]
+             and build.get("compiler_onnx_path") == str(source)
+             and build.get("build_receipt_path") == str(source.parent / f"hailo/{arch}/part1/hailo_hef_build_receipt.json")
+             and ("cache_key" not in build or _sha(build["cache_key"])),
+             "unproved original positive Hailo reuse record")
+    return {"backend_metadata": arch, "historical_observation": deepcopy(build),
+            "historical_reuse_observation": True, "executed_artifact_identity_proved": False,
+            "compiler_source_byte_equality_claimed": False}
+
+
 def _omitted_deepx_provenance(original, *, source_sha256, prepared, case):
     """Retain a known positive unused backend record, without executing it."""
     dx = original["deepx"]["part1_dxnn"]
@@ -517,6 +604,9 @@ def _validate_generic_split_manifest_staging(
     compact_attachment = (not dx_fields.intersection(staged)
         and set(staged.get("hailo", {}).get("hefs", {})) == {"hailo8"}
         and set(staged.get("hailo", {}).get("case_variant_availability", {})) == {"hailo8"})
+    imported_hint = (not dx_fields.intersection(staged)
+        and "part1_original_reuse" in staged.get("hailo", {}).get("hefs", {}).get("hailo8", {}))
+    compact_attachment = compact_attachment and not imported_hint
     input_manifest = original if compact_attachment else staged
     _require(feed == (row.get("runtime_config") or {}).get("input_binding")
              and _sha(prepared.get("sha256"))
@@ -531,10 +621,15 @@ def _validate_generic_split_manifest_staging(
              and all(type(dim) is int and dim > 0 for dim in prepared["shape"])
              and prepared["shape"][-1] == 3 and feed.get("runtime_input_format") == "float32"
              and prepared.get("size_bytes") == math.prod(prepared["shape"])
-             and contract.get("source_image") == feed.get("source_image")
-             and input_manifest["deepx"]["part1_dxnn"]["cache_contract"]["input_shape"]
-                 == [1, 3, *prepared["shape"][:2]],
+             and contract.get("source_image") == feed.get("source_image"),
              "actual typed timing input binding differs")
+    h8_input_authority = None
+    if imported_hint:
+        h8_input_authority = _h8_receipt_input_authority(part1_build_receipt_bytes,
+            bindings, original, staged, prepared, contract)
+    else:
+        _require(input_manifest["deepx"]["part1_dxnn"]["cache_contract"]["input_shape"]
+                 == [1, 3, *prepared["shape"][:2]], "actual typed timing input binding differs")
 
     # Replace only individually validated metadata differences in a temporary
     # comparison copy. Both original documents and file hashes remain intact.
@@ -566,7 +661,31 @@ def _validate_generic_split_manifest_staging(
                  for d in (original, staged)), "invalid tool metadata")
     permit(("tool", "core"), "controller version metadata; graph/source bytes separately bound")
     omitted_unexecuted_backend_metadata = []
-    old_dx = original["deepx"]["part1_dxnn"]
+    old_dx = original.get("deepx", {}).get("part1_dxnn") if imported_hint else original["deepx"]["part1_dxnn"]
+    if imported_hint:
+        _require(dx_fields.intersection(original) in (set(), dx_fields), "incomplete original DeepX authority")
+        if dx_fields.intersection(original):
+            omitted_unexecuted_backend_metadata.append(_omitted_deepx_provenance(
+                original, source_sha256=bindings["source_part1_onnx"]["sha256"], prepared=prepared, case=case))
+            for key in sorted(dx_fields):
+                permit((key,), "positive unused DeepX metadata retained in original provenance")
+        backend_fields = {"backend_terminal_states", "case_variant_availability", "config", "hefs"}
+        full_fields = {"full_end_node_names", "full_endpoint_mode", "full_output_contract"}
+        _require(set(original["hailo"]) in (backend_fields, backend_fields | full_fields)
+                 and set(staged["hailo"]) == backend_fields | {"builds_deferred_until_cache_preflight"}
+                 and staged["hailo"]["builds_deferred_until_cache_preflight"] is True
+                 and set(staged["hailo"]["hefs"]) <= {"hailo8", "hailo10"}
+                 and set(staged["hailo"]["case_variant_availability"]) ==
+                     ({"hailo8", "hailo10h"} if "hailo10" in staged["hailo"]["hefs"] else {"hailo8"}),
+                 "unreviewed original-H8 hint backend scope")
+        permit(("hailo", "builds_deferred_until_cache_preflight"), "normal deferred import metadata")
+        _require(original["hailo"]["config"]["build"].get("part1") is True
+                 and original["hailo"]["config"]["build"].get("part2") is False
+                 and type(original["hailo"]["config"]["build"].get("full")) is bool,
+                 "unreviewed original-H8 hint build scope")
+        permit(("hailo", "config", "build", "full"), "unexecuted Full scope not requested by import")
+        for key in sorted(full_fields.intersection(original["hailo"])):
+            permit(("hailo", key), "unexecuted Full metadata remains in original authority")
     if compact_attachment:
         omitted_unexecuted_backend_metadata.append(_omitted_deepx_provenance(
             original, source_sha256=bindings["source_part1_onnx"]["sha256"],
@@ -592,9 +711,9 @@ def _validate_generic_split_manifest_staging(
             permit(("hailo", "config", "build", "full"), "normal H8-only generation does not request Full")
         for key in sorted(full_fields.intersection(original["hailo"])):
             permit(("hailo", key), "unexecuted Full metadata retained in original manifest authority")
-    else:
+    elif not imported_hint:
         new_dx = staged["deepx"]["part1_dxnn"]
-    if not compact_attachment and (old_dx["build_status"] != new_dx["build_status"] or old_dx["cache_lookup"] != new_dx["cache_lookup"]):
+    if not compact_attachment and not imported_hint and (old_dx["build_status"] != new_dx["build_status"] or old_dx["cache_lookup"] != new_dx["cache_lookup"]):
         lookup = new_dx["cache_lookup"]
         _require(old_dx["build_status"] == "ready_built" and new_dx["build_status"] == "ready_reused"
                  and old_dx["cache_lookup"]["outcome"] == "MISS"
@@ -610,8 +729,51 @@ def _validate_generic_split_manifest_staging(
             permit(("deepx", "part1_dxnn", "cache_lookup", key), "same unused-backend artifact lookup metadata")
     historical_build_reuse = []
     retained_historical_build_metadata = []
+    from .build_evidence import canonical_json_bytes
     for arch in ("hailo8", "hailo10"):
+        if imported_hint and arch not in original["hailo"]["hefs"] and arch not in staged["hailo"]["hefs"]:
+            continue
         old_build = original["hailo"]["hefs"][arch]["part1_build"]
+        if imported_hint:
+            old_hef, new_hef = original["hailo"]["hefs"][arch], staged["hailo"]["hefs"][arch]
+            _require(set(old_hef) <= _FULL_FIELDS | {"part1", "part1_build"}
+                     and old_hef.get("part1") == new_hef.get("part1") == f"hailo/{arch}/part1/compiled.hef",
+                     "original-H8 hint artifact locator differs")
+            proof = _positive_original_build(old_build, original, arch=arch, model=model, case=case,
+                bindings=bindings, full_model_sha256=full_model_sha256, prepared=prepared)
+            if arch == "hailo8":
+                _require(set(new_hef) == {"part1", "part1_original_reuse"}
+                         and new_hef["part1_original_reuse"] == {
+                             "receipt": "hailo/hailo8/part1/hailo_hef_build_receipt.json",
+                             "provenance": "hailo/hailo8/part1/generic_quality_original_hailo_reuse.json"}
+                         and old_build.get("cache_key", h8_input_authority["cache_key"]) == h8_input_authority["cache_key"],
+                         "original-H8 receipt hint differs")
+                if proof.get("historical_reuse_observation") is not True:
+                    proof["actual_receipt_binding"] = _bind_historical_receipt(part1_build_receipt_bytes, old_build, bindings)
+                    historical_build_reuse.append(proof)
+                permit(("hailo", "hefs", arch, "part1_build"), "original build retained in provenance; no current build record invented")
+                permit(("hailo", "hefs", arch, "part1_original_reuse"), "own measured HEF/receipt attached through normal import hint")
+            else:
+                new_build = new_hef.get("part1_build") or {}
+                fields = {"cache_hit", "cache_key", "context_mode", "elapsed_s", "mapping_failed",
+                    "multi_context_used", "ok", "single_context_failed", "single_context_used",
+                    "skipped", "timed_out", "watchdog_expired"}
+                _require(set(new_hef) == {"part1", "part1_build"} and set(new_build) == fields
+                         and new_build["cache_hit"] is new_build["ok"] is new_build["skipped"] is True
+                         and new_build["context_mode"] == "skipped"
+                         and new_build["cache_key"] == old_build.get("cache_key") and _sha(new_build["cache_key"])
+                         and all(new_build[key] is False for key in ("mapping_failed", "multi_context_used",
+                             "single_context_failed", "single_context_used", "timed_out", "watchdog_expired"))
+                         and type(new_build["elapsed_s"]) in (int, float)
+                         and math.isfinite(new_build["elapsed_s"]) and new_build["elapsed_s"] >= 0,
+                         "unproved positive unused H10 import summary")
+                retained_historical_build_metadata.append({**proof, "build_record_unchanged": False,
+                    "staged_unexecuted_summary": deepcopy(new_build), "current_compile_claimed": False,
+                    "current_reuse_claimed": False})
+                permit(("hailo", "hefs", arch, "part1_build"), "positive unused H10 summary; original build retained in provenance")
+                for key in sorted(set(old_hef) & _FULL_FIELDS):
+                    permit(("hailo", "hefs", arch, key), "unexecuted H10 Full metadata remains in original authority")
+            continue
         if compact_attachment and arch == "hailo10":
             old_hef = original["hailo"]["hefs"][arch]
             _require(set(old_hef) <= _FULL_FIELDS | {"part1", "part1_build"}
@@ -709,7 +871,8 @@ def _validate_generic_split_manifest_staging(
     for arch in ("hailo8", "hailo10h"):
         old_hef = original["hailo"]["hefs"].get(arch, {})
         new_hef = staged["hailo"]["hefs"].get(arch, {})
-        removed = set(old_hef) - set(new_hef)
+        removed = (set(old_hef) - set(new_hef)) - (
+            {"part1_build"} if imported_hint and arch == "hailo8" else set())
         _require(removed <= _FULL_FIELDS, "non-Full backend field removed")
         changed_full = any(canonical_json_bytes(old_hef[key]) != canonical_json_bytes(new_hef[key])
                            for key in old_hef.keys() & new_hef.keys() & _FULL_FIELDS)
@@ -799,7 +962,8 @@ def _validate_generic_split_manifest_staging(
         _require((len(retained_historical_build_metadata) == 1 or compact_attachment
                   and any(p["backend_metadata"] == "hailo10" for p in omitted_unexecuted_backend_metadata))
                  and (any(p["backend_metadata"] == "hailo8" and "actual_receipt_binding" in p
-                          for p in historical_build_reuse) or measured_reuse_to_reuse)
+                          for p in historical_build_reuse) or measured_reuse_to_reuse
+                      or h8_input_authority is not None)
                  and len(measured_states) == len(new_states) == 1
                  and all(ready_state(s) for s in expected_states + new_states)
                  and len({(s["hw_arch"], s["variant"]) for s in expected_states}) == len(expected_states)
@@ -824,6 +988,7 @@ def _validate_generic_split_manifest_staging(
         "canonical_original_input_bindings": canonical_original_inputs,
         "prepared_input": {k: prepared[k] for k in ("sha256", "shape", "dtype", "layout", "input_name")},
         "source_image_sha256": feed["source_image_sha256"], "allowed_differences": changes,
+        "native_h8_input_authority": h8_input_authority,
         "historical_build_reuse": historical_build_reuse,
         "retained_historical_build_metadata": retained_historical_build_metadata,
         "omitted_unexecuted_backend_metadata": omitted_unexecuted_backend_metadata,
