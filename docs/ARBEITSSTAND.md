@@ -1,3 +1,23 @@
+## 27.10.2026 — Ressourcenbezogener Start selektiver Generic-FPS
+
+Der normale Controller verwendet die vorhandene ressourcenbezogene
+Eigentümerprüfung jetzt auch für `audited_selective_remeasurement`. Ein
+belegter H10-Lauf oder ein rein zentraler Quality-Abschluss blockiert dadurch
+keinen selektiven Generic-FPS-Lauf auf einem freien H8. Die bestehenden
+physischen Locks und die Messidentität werden unverändert an dieselbe Prüfung
+übergeben. Gleiches DUT, unbekannte Zuordnung und unvollständige Sichtbarkeit
+bleiben blockierend. Globale Standard- und Recovery-Prüfungen bleiben streng.
+
+Die Änderung betrifft ausschließlich den Controller-Aufruf der bestehenden
+Prüfung. Runner, Berechnungen, Messgrenzen, Queue und Wiederholungen bleiben
+bytegleich zum Stand 6acdf869. Reale Hardwareabnahme folgt getrennt über den
+normalen selektiven H8-Lauf; die Softwareprüfung startet keine Hardware.
+124 gezielte Softwaretests bestanden in einer unabhängigen Prüfung. Darunter
+sind vier Controller-Integrationstests mit echten lokalen Run-Locks und
+kontrollierten Transporten sowie die bestehenden Ressourcen-, Setup- und
+Recovery-Regressionen. Gleiches DUT, unbekannte Session und fehlende
+Sichtbarkeit werden weiterhin abgelehnt.
+
 ## 27.10.2026 — Physische Part2-Bridge in Generic Quality
 
 Im B4-Quellstand ist der bestehende Compilerbeleg lokal verifiziert und intern

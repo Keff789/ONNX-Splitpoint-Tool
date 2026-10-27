@@ -1537,6 +1537,7 @@ def _execute_plan(plan_path: Path, plan: dict, *, resume: bool = False,
     starts = plan["start_case_keys"]
     selected_groups = {(r["setup_id"], r["task"]) for r in rows}
     generic_only = plan.get("scope_mode") == "generic_only_completed_task"
+    resource_scoped_owners = generic_only or plan.get("scope_mode") == "audited_selective_remeasurement"
     independent = plan.get("cell_execution_control") is not None
     if independent:
         from .generic_only_cell_policy import require_bound_control
@@ -1622,9 +1623,9 @@ def _execute_plan(plan_path: Path, plan: dict, *, resume: bool = False,
         preflight = (output / "production-preflight" / controller_marker.stem
                      if independent else output / "production-preflight")
         if not independent:
-            observe_owners(targets, preflight, generic_only,
+            observe_owners(targets, preflight, resource_scoped_owners,
                 **({"current_physical_locks": physical_locks,
-                    "measurement_identity": (primary.name, session)} if generic_only else {}))
+                    "measurement_identity": (primary.name, session)} if resource_scoped_owners else {}))
         for setup, target in targets.items():
             if independent and setup in lock_failures:
                 write_json(output / "branch-stops" / controller_marker.stem / (setup + ".json"),
