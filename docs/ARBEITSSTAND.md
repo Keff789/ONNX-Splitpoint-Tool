@@ -1,3 +1,42 @@
+## 27.10.2026 — Physische Part2-Bridge in Generic Quality
+
+Im B4-Quellstand ist der bestehende Compilerbeleg lokal verifiziert und intern
+weitergereicht. Die Boundaryfunktion beachtete aber nur eine Native-Ausführung.
+Der Hailo-Adapter liefert kanonische NCHW-Tensoren, während die vorhandene
+TensorRT-Bridge physische NHWC-Bytes erwartet. Jetzt verwendet die bestehende
+Funktion auch den bereits normal verifizierten Generic-Beleg und denselben
+prepare_quality_first_boundary_input-Adapter. Eingabename, Engineshape und
+Layout müssen zum Beleg passen. Die Native-Bindung behält ihre bisherige
+Priorität. Kein Backend- oder Cut-Sonderfall und keine Native-Implementierung
+wurden ergänzt.
+
+170 gezielte Softwaretests bestanden: 70 Boundary-/Achtdatei-/Native-/H10-Buffer-
+Tests sowie 100 Completion-/H8-Adapter-/Kontext-/Quellschutz-Regressionen. Der
+normale Bundlewriter reproduziert den tatsächlichen alten Runner 307009fd und
+mit dieser Korrektur den neuen Runner 1242bcd9. Unter 42 Bundle-Membern ändern
+sich ausschließlich der generierte Runner und dessen zutreffende
+Generator-Templatebindung; alle 41 übrigen Member bleiben bytegleich.
+
+Der gesonderte reale H8-Diagnoselauf verwendete vier ursprüngliche Bilder und
+dieselben vorhandenen HEF-/TensorRT-Artefakte ohne Build oder Energieaufnahme.
+Die Detektionszahlen waren vorher 0/0/0/0 und danach 17/1/5/4. Korrigierte
+Engineeingaben, rohe Ausgaben und vollständige Records sind für alle vier
+Bilder exakt gleich zum unveränderten Native-Bindungsadapter. Für Bild 000139
+stimmen zusätzlich vorbereitete Eingabe, Boundarybytes, TensorRT-Ausgabe und
+alle 17 Records exakt mit dem ursprünglichen Native-FIFO-Dump überein. Der
+normale Physical-Lease-/SSHTransport-Pfad meldete vollständigen Cleanup und
+keine aktiven eigenen Operationen. Dieser kleine Diagnosebeleg ist keine
+N5000-Qualitätszulassung.
+
+Die ursprünglichen Native-Quality-Records enthalten für Bild 000724 nur drei
+Detektionen, die normale zeitgemessene Completion vier. Der zusätzliche
+überlappende Stoppschild-Record wird durch die historische Quality-NMS entfernt;
+die bestehende Produkt-NMS reproduziert diesen Unterschied. Diese separate
+Vertragskompatibilität bleibt offengelegt, ohne historische Records oder den
+No-second-NMS-Completionvertrag zu verändern. Die belegten Generic-FPS-Aufrufe
+für H8/H10 b043 tragen bereits die Native-Split-Bindung und verwenden den
+korrigierten Generic-Quality-Zweig nicht.
+
 ## 25.10.2026 — Gemeinsame unveränderliche Eingaben bei selektiven Generic-Importen
 
 Der normale Suiteimport kopierte auch die nur gelesenen Modellgraphen und

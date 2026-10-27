@@ -3214,15 +3214,38 @@ def prepare_generic_native_boundary_input(inp: str, src: np.ndarray, target_shap
     split_layout = getattr(
         args, "_native_split_boundary_layout", None
     )
+    split_binding = getattr(args, "_native_split_quality_binding", None)
+    split_input = getattr(args, "_native_split_boundary_input_name", "")
+    split_transform = getattr(args, "_native_split_boundary_transform", "")
+    split_scale = getattr(args, "_native_split_boundary_dequant_scale", None)
+    split_zero = getattr(args, "_native_split_boundary_dequant_zero_point", None)
+    if not isinstance(split_binding, Mapping):
+        # Generic Quality reuses an existing internally bridged engine only
+        # after the ordinary eight-file validator has verified its binding.
+        # Hailo's canonical output still needs the same physical-byte feed as
+        # that engine; the Generic caller never gains Native execution status.
+        split_binding = getattr(args, "_generic_quality_interface_binding", None)
+        if isinstance(split_binding, Mapping):
+            bridge = (split_binding.get("native_trt_meta") or {}).get("uint8_cast_bridge") or {}
+            selected = split_binding.get("preselection") or {}
+            split_layout = bridge.get("boundary_layout") or {}
+            split_input = str(bridge.get("input_name") or "").strip()
+            if (not split_input or split_input != selected.get("boundary_tensor_name")
+                    or split_layout.get("effective") != selected.get("boundary_layout")
+                    or bool(split_layout.get("applied")) != bool(
+                        selected.get("boundary_layout") not in {"", "as_input", None})
+                    or tuple(bridge.get("input_shape") or ()) != shape_t):
+                raise ValueError("Generic Quality verified Part2 bridge contract mismatch")
+            split_transform = selected.get("boundary_transform", "")
+            split_scale = selected.get("dequant_scale")
+            split_zero = selected.get("dequant_zero_point")
     if (
-        isinstance(
-            getattr(args, "_native_split_quality_binding", None), Mapping
-        )
+        isinstance(split_binding, Mapping)
         and isinstance(split_layout, Mapping)
         and split_layout.get("applied") is True
     ):
         expected_split_input = str(
-            getattr(args, "_native_split_boundary_input_name", "") or ""
+            split_input or ""
         ).strip()
         if not expected_split_input or str(inp) != expected_split_input:
             raise ValueError(
@@ -3234,17 +3257,9 @@ def prepare_generic_native_boundary_input(inp: str, src: np.ndarray, target_shap
             target_shape=shape_t,
             target_dtype=target_dtype,
             boundary_layout=split_layout,
-            boundary_transform=str(
-                getattr(
-                    args, "_native_split_boundary_transform", ""
-                ) or ""
-            ),
-            dequant_scale=getattr(
-                args, "_native_split_boundary_dequant_scale", None
-            ),
-            dequant_zero_point=getattr(
-                args, "_native_split_boundary_dequant_zero_point", None
-            ),
+            boundary_transform=str(split_transform or ""),
+            dequant_scale=split_scale,
+            dequant_zero_point=split_zero,
         )
         _record_boundary_event({
             "input": inp,
