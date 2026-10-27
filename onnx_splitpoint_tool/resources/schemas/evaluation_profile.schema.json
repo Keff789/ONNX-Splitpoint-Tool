@@ -1784,7 +1784,7 @@
             "max_active_requests": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2
+              "maximum": 4
             },
             "block_repetitions": {
               "type": "integer",

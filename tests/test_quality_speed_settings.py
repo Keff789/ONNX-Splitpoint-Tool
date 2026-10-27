@@ -59,8 +59,10 @@ def test_legacy_profile_keeps_statistics_workers_and_reference_inheritance(tmp_p
     assert path.read_bytes() == before
 
 
-def test_normal_save_load_snapshot_preserves_independent_execution_controls(tmp_path):
+@pytest.mark.parametrize('max_active_requests', [1, 2, 3, 4])
+def test_normal_save_load_snapshot_preserves_independent_execution_controls(tmp_path, max_active_requests):
     profile = _custom(_profile())
+    profile['quality_gate']['statistics']['max_active_requests'] = max_active_requests
     before = copy.deepcopy(profile)
     path = tmp_path / 'optimized.yaml'
     save_evaluation_profile_yaml(path, profile)
@@ -108,7 +110,8 @@ def test_run_mode_registry_save_reload_materialization_and_snapshot(tmp_path, bl
 
 @pytest.mark.parametrize('field,value', [
     ('engine', 'unknown'), ('engine', None),
-    ('max_active_requests', 0), ('max_active_requests', 3),
+    ('max_active_requests', 0), ('max_active_requests', 5),
+    ('max_active_requests', True), ('max_active_requests', '4'),
     ('block_repetitions', 0), ('block_repetitions', 5001),
     ('block_repetitions', True), ('block_repetitions', '128'),
     ('block_repetitions', None), ('checkpoint_blocks', 'false'),

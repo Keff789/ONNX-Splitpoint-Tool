@@ -229,7 +229,7 @@ def test_invalid_row_indices_fail_before_output(tmp_path, indices):
 
 
 @pytest.mark.parametrize('options', [dict(engine='typo'), dict(block_repetitions=0),
-    dict(checkpoint_blocks=1), dict(bootstrap_repetitions=1), dict(max_active_requests=3)])
+    dict(checkpoint_blocks=1), dict(bootstrap_repetitions=1), dict(max_active_requests=5)])
 def test_execution_options_cannot_replace_scientific_budget(tmp_path, options):
     run, _ = _make_replay_run(tmp_path)
     out = tmp_path / 'must_not_exist'

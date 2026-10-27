@@ -16,7 +16,7 @@ def statistics_options(profile):
     out = {key: raw.get(key, default) for key, default in DEFAULTS.items()}
     if out["engine"] not in {"legacy", "optimized_coco_v1"}:
         raise ValueError("quality_gate.statistics.engine must be legacy or optimized_coco_v1")
-    for key, low, high in [("max_active_requests",1,2), ("block_repetitions",1,5000),
+    for key, low, high in [("max_active_requests",1,4), ("block_repetitions",1,5000),
                            ("prepared_cache_limit_mib",16,65536)]:
         if type(out[key]) is not int or not low <= out[key] <= high:
             raise ValueError(f"quality_gate.statistics.{key} must be an integer in [{low}, {high}]")

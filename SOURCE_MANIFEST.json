@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 538013,
-      "sha256": "a5954eefb88bb52444ad753a820dc0a8e75991c426f71aa1a611954f88f26f7d"
+      "size": 539513,
+      "sha256": "5f616df62075218de120c25647ea8ddbf5c31bdfc224dc6a87014a8168b23de2"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1166,8 +1166,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/gui/run_mode_editor.py",
-      "size": 52377,
-      "sha256": "dd0e9bf0d5a7948d2209c03d5046d5ac50e024f0ba06b64e4d0833286f3d54be"
+      "size": 52378,
+      "sha256": "5f956b2e731d78fe16e2526ad67c2ef04073d74214ec667d03388ca65b1217f0"
     },
     {
       "path": "onnx_splitpoint_tool/gui/state.py",
@@ -1552,7 +1552,7 @@
     {
       "path": "onnx_splitpoint_tool/quality_statistics_config.py",
       "size": 3765,
-      "sha256": "3896e00c431ccc0d73a9ed2e253246f4ac3e2c77695de689d79703e19864ecc7"
+      "sha256": "b5d43135c7482a172a4d9ed54b19e4920ea3a352ee86b3d4ef8ef81bc41270b7"
     },
     {
       "path": "onnx_splitpoint_tool/ranking_methods.py",
@@ -2082,7 +2082,7 @@
     {
       "path": "onnx_splitpoint_tool/resources/schemas/evaluation_profile.schema.json",
       "size": 100978,
-      "sha256": "072be722f6f11736110b3a8e044655ca78707a2f0bd982d6fc26b9cff551af2d"
+      "sha256": "42b4868a4c67086a56820a679bed57860061e88359975bbc06a9f4099f424efb"
     },
     {
       "path": "onnx_splitpoint_tool/resources/schemas/split_manifest.schema.json",
@@ -8032,7 +8032,7 @@
     {
       "path": "tests/test_quality_speed_replay.py",
       "size": 21799,
-      "sha256": "305844e1ccbefe4fbbf3574ccf528530fb492d8c859324e38f8dfdd7d3583446"
+      "sha256": "ed0c0ceaf44433fab9625dff325e5178e37583723eecdf9977c67fcd4f1b28a2"
     },
     {
       "path": "tests/test_quality_speed_resource_budget.py",
@@ -8041,8 +8041,8 @@
     },
     {
       "path": "tests/test_quality_speed_settings.py",
-      "size": 16959,
-      "sha256": "bf2f4861934d0db6549d807811b3901a28f7ff695a1a5f2f68c3dfa4eed72772"
+      "size": 17194,
+      "sha256": "031c65f212a35ae6dedcb1a3347036e7f238549500de005e0406e4891bd28571"
     },
     {
       "path": "tests/test_quality_transfer_admission.py",

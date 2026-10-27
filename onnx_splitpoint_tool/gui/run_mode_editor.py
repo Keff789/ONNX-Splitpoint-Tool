@@ -196,7 +196,7 @@ _SECTIONS: list[tuple[str, list[FieldSpec]]] = [
             ("Quality execution", "quality.execution_location", "choice", "central_management", ("local", "central_management"), "Smoke, Standard and Final run the semantic CPU reference and paired uncertainty on the management node."),
             ("Statistics processes", "quality.workers", "int", 4, None, "Management statistics workers; all packaged modes default to four."),
             ("CPU reference threads", "quality.reference_intra_op_threads", "optional_int", None, None, "Blank retains historical inheritance; explicitly set to decouple reference inference from statistics processes."),
-            ("Active statistics requests", "quality.statistics_max_active_requests", "int", 1, None, "One or two active requests share one bounded worker pool."),
+            ("Active statistics requests", "quality.statistics_max_active_requests", "int", 1, None, "One to four active requests share one bounded worker pool."),
             ("Statistics engine", "quality.statistics_engine", "choice", "legacy", ("legacy", "optimized_coco_v1"), "Exact compact COCO statistics; no change to image/draw budgets."),
             ("Draws per block", "quality.statistics_block_repetitions", "int", 256, None, "Task size only, not total repetitions."),
             ("Save completed statistics blocks", "quality.statistics_checkpoint_blocks", "bool", False, None, "Resume validated complete blocks in this run."),
