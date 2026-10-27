@@ -215,6 +215,7 @@ _RETAINED_RELEASE_DOC_FILES = {
 }
 _ALLOWED_SOURCE_TREES = {"onnx_splitpoint_tool", "scripts", "tests"}
 _ALLOWED_DOC_FILES = {
+    "docs/NATIVE_DATASET_QUALITY.md",
     "docs/RELEASE_SCOPE_V282.md",
     "docs/V282_EVIDENCE_INDEX.json",
     "docs/ONNX_SPLITPOINT_KnowledgeBase_CANONICAL_v2.82_2026-09-13.md",

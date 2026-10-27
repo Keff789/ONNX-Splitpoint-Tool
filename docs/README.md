@@ -1,5 +1,10 @@
 # Documentation index — current release 2.95.5
 
+The [Native dataset Quality entrypoint](NATIVE_DATASET_QUALITY.md) observes the
+existing Native FIFO completion over the fixed N5000 dataset, without a second
+host NMS or new FPS/energy measurements. Its normal central consumer reuses the
+immutable CPU reference and the existing statistics service.
+
 ## Generic Quality vor Dispatch
 
 `observe_generic_predispatch_run_binding` erfasst eine neue ausschließlich lesende

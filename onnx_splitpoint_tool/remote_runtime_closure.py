@@ -249,3 +249,22 @@ def native_remote_package_closure() -> Tuple[RemotePackageAsset, ...]:
 def native_remote_resource_closure() -> Tuple[RemoteResourceAsset, ...]:
     """Hailo concurrent helper's path-loaded assets, without Python imports."""
     return NATIVE_CONCURRENT_RESOURCE_CLOSURE
+
+
+# Dataset Quality observes the same Native FIFO classes, with no performance
+# measurement or second detector postprocessor.  Keep its import preflight
+# independent from an installed controller package on the accelerator.
+NATIVE_DATASET_QUALITY_PACKAGE_CLOSURE = NATIVE_REMOTE_PACKAGE_CLOSURE + tuple(
+    ("onnx_splitpoint_tool/" + name + ".py", "onnx_splitpoint_tool." + name, ())
+    for name in (
+        "native_dataset_quality", "native_dataset_quality_export",
+        "native_dataset_quality_h10", "native_dataset_quality_h8",
+        "quality_cache", "quality_service", "quality_lifecycle",
+    )
+)
+NATIVE_DATASET_QUALITY_RESOURCE_CLOSURE = (
+    ("scripts/native_dataset_quality.py", ()),
+    ("scripts/native_hailo10_trt_e2e_from_benchmarkset.py", ()),
+    ("onnx_splitpoint_tool/resources/remote_scripts/native_hailo10_trt_e2e_from_benchmarkset.py", ()),
+    ("onnx_splitpoint_tool/resources/remote_scripts/native_hailo_trt_fifo_from_benchmarkset.py", ()),
+)

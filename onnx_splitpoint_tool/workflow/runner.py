@@ -7565,6 +7565,7 @@ class EvaluationWorkflowRunner:
         verified_trt_flat: dict[str, Any] = {}
         verified_generic_composed_producer: dict[str, Any] = {}
         verified_generic_composed_flat: dict[str, Any] = {}
+        verified_native_dataset_producer: dict[str, Any] = {}
         verified_split_binding: dict[str, Any] = {}
         split_binding_sha256 = ""
         split_binding_required = bool(
@@ -7941,6 +7942,28 @@ class EvaluationWorkflowRunner:
                     "generic_composed_producer_validation_failed:"
                     + type(exc).__name__
                 )
+        if (include_validated_producer and producer.get("schema")
+                == "onnx-splitpoint/native-dataset-quality-producer"):
+            try:
+                from onnx_splitpoint_tool.quality_service import _validate_candidate_execution_contract
+                native_producer, _ = _validate_candidate_execution_contract(
+                    producer, role="workflow Native dataset request", task=declared_task)
+                expected_scope = {
+                    "model_id": model_id, "case_id": str(case_id or declared_case).strip().lower(),
+                    "setup_id": setup_id or declared_setup, "source_run_id": path_run or declared_run,
+                    "runtime_precision_identity": runtime_precision,
+                }
+                for name, expected in expected_scope.items():
+                    if native_producer.get(name) != expected:
+                        identity_errors.append("native_dataset_producer_scope_conflict:" + name)
+                for name in ("eval_run_id", "model_id", "case_id", "setup_id", "source_run_id", "backend",
+                             "runtime_precision_identity", "execution_role", "performance_claims_emitted"):
+                    if payload.get(name) != native_producer.get(name):
+                        identity_errors.append("native_dataset_producer_duplicate_conflict:" + name)
+                if not identity_errors:
+                    verified_native_dataset_producer = copy.deepcopy(native_producer)
+            except Exception as exc:
+                identity_errors.append("native_dataset_producer_validation_failed:" + type(exc).__name__)
         if payload.get("schema") == "onnx-splitpoint/central-quality-evaluation-request":
             if not endpoint_hash:
                 identity_errors.append("missing_endpoint_contract_hash")
@@ -7975,6 +7998,7 @@ class EvaluationWorkflowRunner:
                 declared_variant == "composed"
                 and payload.get("provenance_required") is True
                 and not verified_generic_composed_producer
+                and not verified_native_dataset_producer
                 and not verified_split_binding
             ):
                 identity_errors.append(
@@ -7985,7 +8009,8 @@ class EvaluationWorkflowRunner:
             # v4 preserves the signed Full TensorRT producer; v5 additionally
             # carries the exact Native split Quality-FIRST binding.
             "schema_version": (
-                6 if verified_generic_composed_producer and not identity_errors
+                7 if verified_native_dataset_producer and not identity_errors
+                else 6 if verified_generic_composed_producer and not identity_errors
                 else 5 if verified_split_binding and not identity_errors
                 else 4 if verified_trt_producer and not identity_errors else 3
             ),
@@ -8036,11 +8061,13 @@ class EvaluationWorkflowRunner:
             "producer_identity_validated": bool(
                 verified_trt_producer
                 or verified_generic_composed_producer
+                or verified_native_dataset_producer
             ),
             "artifact_provenance_binding_status": (
                 "verified"
                 if (
                     verified_generic_composed_producer
+                    or verified_native_dataset_producer
                     or verified_split_binding
                 )
                 else "legacy_unbound"
@@ -8050,6 +8077,7 @@ class EvaluationWorkflowRunner:
             ),
             "artifact_provenance_claim_eligible": bool(
                 verified_generic_composed_producer
+                or verified_native_dataset_producer
                 or verified_split_binding
             ),
             # Evaluation changes this to true only after the quality-service
@@ -8096,6 +8124,15 @@ class EvaluationWorkflowRunner:
                 ),
                 "artifact_provenance_binding_status": "verified",
                 "artifact_provenance_claim_eligible": True,
+            })
+        if verified_native_dataset_producer and not identity_errors:
+            identity.update({
+                "producer_identity": copy.deepcopy(verified_native_dataset_producer),
+                "producer_kind": "native_dataset_completed_quality",
+                "producer_backend": verified_native_dataset_producer["backend"],
+                "runtime_artifacts": [dict(value, role=name) for name, value in
+                                      verified_native_dataset_producer["artifacts"].items()],
+                "runtime_artifact_set_sha256": canonical_contract_sha256(verified_native_dataset_producer["artifacts"]),
             })
         if verified_split_binding and not identity_errors:
             identity.update({

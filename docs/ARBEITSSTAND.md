@@ -4801,3 +4801,28 @@ Validierung: 28 fokussierte Softwaretests bestanden, darunter positive H8-/H10-I
 Die lokale ausgewählte Generic-Importprüfung prüft eine vollständige aktuelle 37-Python-Quelldeklaration vor dem Kopieren mit denselben vorhandenen normalen Runtimewritern, die anschließend die private Importsuite regenerieren. Alle 37 eindeutigen relativen Pfade, SHA256-Werte und positiven ganzzahligen Größen müssen exakt dem tatsächlich frisch gerenderten normalen Runtimeumfang entsprechen. Ausschließlich diese nachgewiesenen Runtimeabhängigkeiten dürfen dabei von den Größen der alten Donorruntime abweichen. Artefakt-, Modell-, Graph-, Daten-, Input-, Pfad-, Symlink- und fehlende-Donordatei-Prüfungen sowie der anschließende normale Sourceguard bleiben erhalten; der Remote-Transport verwendet weiterhin ausschließlich tatsächliche gestagte Runtimebytes. Alte Donoren und aktive Exporte werden nicht verändert.
 
 Validierung: 18 neue gezielte Softwaretests und insgesamt 121 relevante Import-, Transport- und Producer-Source-Tests bestanden. Der positive normale Import prüft alle 42 tatsächlich regenerierten Runtime-Dateien und sämtliche 37 Python-SHA-/Größenbindungen; falsche oder fehlende Größen, falsche SHAs, doppelte/fremde/unsichere Pfade sowie späte Runtimeänderungen bleiben gesperrt. Ein unabhängiger fokussierter Peer-Review fand keinen Blocker. Ein einzelner normaler rein lesender b105-Selektoraufruf mit vollständiger tatsächlicher 37er-Bindung bestätigte 133 Binärausschlüsse und vier exakt ausgewählte portable Veröffentlichungsziele trotz anderer alter Donorrunner-Größe. Dafür wurde ausschließlich eine getrennte Software-Konfigurationsprojektion mit byteidentischen Boundary-Pfadaliasen verwendet; es entstand kein Source-Lauf, Request oder Completion-Beleg. Compiler, Hardware, Inferenz, Quality-/FPS-Ausführung und CURRENT wurden nicht gestartet. Die echte Fortsetzung benötigt eine neue veröffentlichte Source-Epoche mit eigenen normalen Zulassungen.
+## 27.10.2026 — Native-Dataset-Quality am tatsächlichen Completionpfad
+
+Ein gesonderter normaler Native-Quality-Auftrag erfasst die festgelegten 5000
+COCO-Bilder mit den bestehenden H8-/H10-FIFO-Funktionen und ihren tatsächlichen
+Completion-Attestierungen. Die neue Aufnahme verwendet eine eigene Runidentität;
+der unveränderte frühere Achtartefaktbeleg bleibt getrennte Artefaktauswahl.
+Vorhandene Native-FPS-/Energie-Hotloops, Preprocessing, Compilate, CPU-Referenzen,
+5%-Berichtspolitik und B1000-Statistik bleiben unverändert. Nach dem tatsächlichen
+Native-Completionergebnis wird keine zusätzliche NMS ausgeführt.
+
+Der normale Export bindet jeden Bildhash, vorbereiteten Input, Grenztensorbeleg,
+Completionvertrag und dessen verifiziertes Ergebnis sowie die tatsächlichen
+Produktquellen. Der normale Consumer kontrolliert diese Belege und übernimmt
+die vorhandene unveränderliche CPU-Referenz über deren ursprünglichen Status.
+Er verwendet den injizierten ManagementQualityService und eröffnet weder
+Inferenz noch einen eigenen Pool. Reguläre SSH-/Run-/DUT-/Prozess-Leases,
+vollständige Kapazitätsplanung und Quellprüfung bleiben aktiv. Native verwendet
+keinen Generic-Canary-Cacheflag; Buildausschluss gilt unabhängig davon.
+
+Gezielte Tests prüfen echte FIFO-/Completionfunktionen mit injizierter Hardware,
+zwei Bildgeometrien, normale Request-/Consumerintegration, ID-/Labelsemantik,
+Kaltimport der exakten Remotequellen und negative Eingabe-/Belegfälle. Reale
+N5000-Aufnahme und anschließende zentrale Auswertung sind eigene Laufbelege;
+dieser Softwarestand erklärt keinen Hardware- oder Gesamtworkflow-PASS.
+Details: [NATIVE_DATASET_QUALITY.md](NATIVE_DATASET_QUALITY.md).

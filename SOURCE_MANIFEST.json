@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2418,
+  "file_count": 2434,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 541320,
-      "sha256": "9e5f8fcde91a6b01f622f58a83ff9968af0ddd5afa37ddcdb1e3bfe8c1ce6a30"
+      "size": 543028,
+      "sha256": "43fa8cb40eca739b8640cf5577117a11386416947a6ff9dc3c3042a15a9aab75"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -410,6 +410,11 @@
       "sha256": "5be969cd37fdf6df672e57d935a636ec3e84bbfe77fa9fa698d4a682758ddcd9"
     },
     {
+      "path": "docs/NATIVE_DATASET_QUALITY.md",
+      "size": 4624,
+      "sha256": "cfe2df79258cecd1394959fb94c4431c3fd3cd8ed32d12f1862d729bb33a399a"
+    },
+    {
       "path": "docs/NATIVE_HAILORT_TRT_FIFO_FASTPATH.md",
       "size": 4122,
       "sha256": "725c3a465d3fd019484f7d2040bb1b5aab607a0636519eb353f7f11e8d206dcc"
@@ -451,8 +456,8 @@
     },
     {
       "path": "docs/README.md",
-      "size": 29213,
-      "sha256": "f84dc55c4d4fc640e43c12410c89b1f47643ca753e03b847e5d84f041d49d492"
+      "size": 29514,
+      "sha256": "c54eef4d5c1f12b1a9859adeebc107c807723c4c879181de9968085075ff4538"
     },
     {
       "path": "docs/RELEASE_2.83.md",
@@ -1360,6 +1365,31 @@
       "sha256": "b9761162f979efd3931797b2b33e31f3fc219de11484ef43aafadfe1eb1a4744"
     },
     {
+      "path": "onnx_splitpoint_tool/native_dataset_quality.py",
+      "size": 15629,
+      "sha256": "e09c1233f70e3982cb68da2c9d40b2c74e15908d4c4ac499a06bf4e4b2a6d9ed"
+    },
+    {
+      "path": "onnx_splitpoint_tool/native_dataset_quality_consumer.py",
+      "size": 19307,
+      "sha256": "193bc5716b3e344142b6777255346efd03b3910bd9f1f89c1bd58f811d619d8e"
+    },
+    {
+      "path": "onnx_splitpoint_tool/native_dataset_quality_export.py",
+      "size": 14088,
+      "sha256": "3ca988a73439e3ca5cc468ce6fa80497baf652400060b234e4a42e1491486bf1"
+    },
+    {
+      "path": "onnx_splitpoint_tool/native_dataset_quality_h10.py",
+      "size": 12978,
+      "sha256": "8e95505747c3e8bd6a15c65e28332c434160a15fa65f18ba998dd60c83153795"
+    },
+    {
+      "path": "onnx_splitpoint_tool/native_dataset_quality_h8.py",
+      "size": 12738,
+      "sha256": "99f6ea3675b46e96ee152b3d0ff0dde5bb69eff7113c50fdb709b1d3f42c8eed"
+    },
+    {
       "path": "onnx_splitpoint_tool/native_deepx_async.py",
       "size": 31908,
       "sha256": "4c2ade64af9d63291ba8869899718e5d8e433218a5a2fffd1f194475c8177029"
@@ -1536,8 +1566,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/quality_service.py",
-      "size": 260145,
-      "sha256": "2e507c34cb3b814b97a7567decb30d872b6a467e1677f2e18635f8c78c0faf9f"
+      "size": 262082,
+      "sha256": "ce614fe40ebc9295b879a076722fa7e1bc6f250350ad91f289c2f8d774b41367"
     },
     {
       "path": "onnx_splitpoint_tool/quality_statistics.py",
@@ -1621,8 +1651,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote_runtime_closure.py",
-      "size": 10275,
-      "sha256": "0167ac583d3e7ecbfa513a1285c243a164a169cc56d049f35d43e61c820441c1"
+      "size": 11249,
+      "sha256": "f64f22578da0ea95bb83cca710e9a1d05c81abfd0b23ca8ae9c0dc77e3f5e3e8"
     },
     {
       "path": "onnx_splitpoint_tool/reporting_figures.py",
@@ -2366,8 +2396,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/source_integrity.py",
-      "size": 30194,
-      "sha256": "b0027a567a9fa64ab900a67b17b38f2970ef9e6d62c0a69a01834811cfdc7e20"
+      "size": 30232,
+      "sha256": "6121013d2a8888383f759d82fdd091f9021495878185b4906ac52b7a00e753f7"
     },
     {
       "path": "onnx_splitpoint_tool/split_export.py",
@@ -3260,6 +3290,11 @@
       "sha256": "beb6a403b6edc13a4eb8d805257a791fd015559426b9f436e2f3e41a20e3871d"
     },
     {
+      "path": "onnx_splitpoint_tool/workflow/native_dataset_quality.py",
+      "size": 12336,
+      "sha256": "196f312a910895c1a6c4c0a5fcafcad1f20970e51a0dea5a6d7854b0ad1cf920"
+    },
+    {
       "path": "onnx_splitpoint_tool/workflow/native_energy_parent.py",
       "size": 75694,
       "sha256": "00f85f5bc165ed140c9af88cf8615df69ec334610014a3b9311a658d504845ff"
@@ -3336,8 +3371,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/runner.py",
-      "size": 1598522,
-      "sha256": "74a5ac8e96bee3ed4b6c3b859e229129b6a540d6b5b856b776990837b15f66c5"
+      "size": 1601156,
+      "sha256": "c8dcec081abf276410060afa0d8237122d0bf55f0a3350c7f88c608f86fc2574"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/scientific_replay.py",
@@ -3471,8 +3506,8 @@
     },
     {
       "path": "scripts/build_source_manifest.py",
-      "size": 35400,
-      "sha256": "14be3360baeeb6a6027a8e1b7761cde08d4889ca812e1abead7cd24395ba92c3"
+      "size": 35438,
+      "sha256": "02969e7a8136b086e15ff8928bd53f99aded4dcfb0b826529afca2a0f027fd00"
     },
     {
       "path": "scripts/build_source_release.py",
@@ -4033,6 +4068,16 @@
       "path": "scripts/native_console_smoke.py",
       "size": 80801,
       "sha256": "c950fd052647afb1d2ca58a8b240837fc9c4e1f3b9d222a1b5931dffbdfa54e3"
+    },
+    {
+      "path": "scripts/native_dataset_quality.py",
+      "size": 322,
+      "sha256": "c858b90ac7592e35c6c82a593184da4fa9ede15ce4b368731b4207910c58ec61"
+    },
+    {
+      "path": "scripts/native_dataset_quality_remote.py",
+      "size": 958,
+      "sha256": "0699bd7aa7cfb47486f0e29fb4e4078571c9980b3131d2b4adabc5164a7cd1a9"
     },
     {
       "path": "scripts/native_deepx_full_energy_hotloop.py",
@@ -7908,6 +7953,41 @@
       "path": "tests/test_native_concurrent_runtime_sync.py",
       "size": 2589,
       "sha256": "1354d2d9f9d4e87e369a6df263b0a67b17e56454a01b17f7b7e45793cd698ebe"
+    },
+    {
+      "path": "tests/test_native_dataset_quality_capture.py",
+      "size": 18782,
+      "sha256": "1e897432d0591e03db134d3e5f117d8513f6e4105f643b108c45f930109f93c7"
+    },
+    {
+      "path": "tests/test_native_dataset_quality_closure.py",
+      "size": 5246,
+      "sha256": "a5c5dfb99d1fc181d0bd00697a7709c5ed072de51047103ed94c9b51da00ca7e"
+    },
+    {
+      "path": "tests/test_native_dataset_quality_consumer.py",
+      "size": 15822,
+      "sha256": "1ee63b97588a8cf442a4a3e8e21ac4cfaf5e923196298a363c1958f46306c3a2"
+    },
+    {
+      "path": "tests/test_native_dataset_quality_export.py",
+      "size": 12183,
+      "sha256": "c3a379a10a040af4f1125400f8bd89f1fe0f7f02e58fa0dd8a24834fcda951a7"
+    },
+    {
+      "path": "tests/test_native_dataset_quality_h10.py",
+      "size": 17348,
+      "sha256": "1658a97f10e94e026339c94d6a6b365e3edd6f57aa1470a4c08d4ef3db3484eb"
+    },
+    {
+      "path": "tests/test_native_dataset_quality_h8.py",
+      "size": 13269,
+      "sha256": "0b97ee0a3d85eca799d2d0ccbdbcaf2132432f5820d078b4546cf8683e835b60"
+    },
+    {
+      "path": "tests/test_native_dataset_quality_workflow.py",
+      "size": 15667,
+      "sha256": "5fb94b775b9f9344f289fc680cf87d7845bec710df86691dfc61e044ef28a71c"
     },
     {
       "path": "tests/test_native_fairness_report_statistics.py",

@@ -2479,6 +2479,9 @@ def _validate_candidate_execution_contract(
         return _validate_generic_composed_candidate_execution_contract(
             value, role=role, task=task,
         )
+    if schema == "onnx-splitpoint/native-dataset-quality-producer":
+        from .native_dataset_quality_consumer import validate_native_dataset_quality_producer
+        return validate_native_dataset_quality_producer(value, role=role, task=task)
     raise QualityArtifactIntegrityError(
         f"{role} candidate execution contract schema is unsupported"
     )
@@ -3064,10 +3067,19 @@ def quality_request_from_manifest(
                             f"{duplicate_role} top-level {field_name} "
                             "differs from producer identity"
                         )
+        if producer_execution_schema == "onnx-splitpoint/native-dataset-quality-producer":
+            for duplicate_role, payload in (("request", manifest), ("candidate", candidate_payload)):
+                for field_name in ("eval_run_id", "model_id", "case_id", "setup_id", "source_run_id", "backend",
+                                   "execution_role", "performance_claims_emitted", "variant", "task", "source_model_sha256",
+                                   "producer_kind", "additional_nms_applied", "record_count", "endpoint_contract",
+                                   "candidate_execution_completion_contract", "candidate_execution_completion_contract_sha256"):
+                    if payload.get(field_name) != request_producer.get(field_name):
+                        raise QualityArtifactIntegrityError(f"{duplicate_role} Native {field_name} differs from producer identity")
         endpoint_precision_payloads = [("request", manifest)]
         if producer_execution_schema in {
             "onnx-splitpoint/tensorrt-central-quality-producer-identity",
             "onnx-splitpoint/generic-composed-quality-producer-identity",
+            "onnx-splitpoint/native-dataset-quality-producer",
         }:
             endpoint_precision_payloads.append(("candidate", candidate_payload))
         for duplicate_role, payload in endpoint_precision_payloads:
@@ -3284,6 +3296,9 @@ def quality_request_from_manifest(
     candidate_records = candidate_payload.get("records")
     if not isinstance(reference_records, list) or not isinstance(candidate_records, list):
         raise QualityArtifactIntegrityError("quality artifacts must contain a records array")
+    if producer_execution_schema == "onnx-splitpoint/native-dataset-quality-producer":
+        from .native_dataset_quality_consumer import validate_native_dataset_completion_evidence
+        validate_native_dataset_completion_evidence(producer_execution_contract, request_path, candidate_records)
     if manifest.get("reference_record_count") is not None and int(manifest["reference_record_count"]) != len(reference_records):
         raise QualityArtifactIntegrityError("reference record count does not match request")
     if manifest.get("record_count") is not None and int(manifest["record_count"]) != len(candidate_records):
@@ -3441,7 +3456,10 @@ def quality_request_from_manifest(
                             raise QualityArtifactIntegrityError("DeepX detection candidate contains non-finite values")
                     if numeric["x2"] < numeric["x1"] or numeric["y2"] < numeric["y1"]:
                         raise QualityArtifactIntegrityError("DeepX detection candidate contains inverted coordinates")
-                    if not 0.0 <= numeric["score"] <= 1.0 or not str(detection.get("class_name") or ""):
+                    native_dataset = producer_execution_schema == "onnx-splitpoint/native-dataset-quality-producer"
+                    if native_dataset and (numeric["class_id"] < 0 or not numeric["class_id"].is_integer()):
+                        raise QualityArtifactIntegrityError("Native completion class_id is not a nonnegative integer")
+                    if not 0.0 <= numeric["score"] <= 1.0 or (not native_dataset and not str(detection.get("class_name") or "")):
                         raise QualityArtifactIntegrityError("DeepX detection candidate score/class provenance is invalid")
                 ground_truth_value: Any = ground_truth
             else:
@@ -3618,7 +3636,8 @@ def quality_request_from_manifest(
     if variant == "composed":
         if (
             producer_execution_schema
-            == "onnx-splitpoint/generic-composed-quality-producer-identity"
+            in {"onnx-splitpoint/generic-composed-quality-producer-identity",
+                "onnx-splitpoint/native-dataset-quality-producer"}
             or native_split_binding is not None
         ):
             artifact_provenance_binding_status = "verified"
