@@ -183,6 +183,48 @@ def finite_native_predecessor(run, attempt):
     return directory, request, reply, cfg, evidence
 
 
+def _replacement_argv(new_action, old_action, run, failed_attempt, evidence):
+    """Admit only the normal exact-predecessor partial-repeat bookkeeping."""
+    from ..energy.task_budget import read_verified_campaign_repeat
+    argv = new_action.get("argv")
+    _require(isinstance(argv, list), "replacement argv missing")
+    normalized = list(argv)
+    if "--previous-results" not in argv or "--previous-results" in old_action["argv"]:
+        return normalized
+    previous = Path(_option(argv, "--previous-results"))
+    old_output = Path(_option(old_action["argv"], "--out-dir"))
+    _require(previous == old_output / "native_producer_energy_results.partial.json"
+             and previous.is_relative_to(failed_attempt), "previous results must be the exact closed predecessor partial")
+    descriptors = [item for item in new_action.get("input_descriptors", []) if item.get("path") == str(previous)]
+    _require(len(descriptors) == 1 and _descriptor(descriptors[0]) == previous,
+             "previous partial hash binding missing")
+    partial = _read(previous); plan_path = old_output / "plan/native_producer_energy_plan.json"
+    plan = evidence[plan_path]; rows = partial.get("rows")
+    _require(partial.get("complete") is False and partial.get("plan_payload") == plan
+             and isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0].get("row"), dict),
+             "previous partial differs from the actual closed plan")
+    row = plan["rows"][0]; identity = [row[key] for key in ("backend", "model", "case", "setup_id")]
+    _require(all(rows[0]["row"].get(key) == row.get(key) for key in (
+        "backend", "model", "case", "setup_id", "successful_command_contract_sha256",
+        "native_command_contract", "source_request_sha256")), "previous partial Native identity changed")
+    budget = _read(run / "energy_task_budget.json")
+    task = budget.get("tasks", {}).get(json.dumps(identity, separators=(",", ":")), {})
+    valid = [chain for chain in task.get("chains", []) if chain.get("valid") is True]
+    _require(len(valid) == 1 and valid[0].get("logical_repeat") == "repeat:0"
+             and Path(valid[0]["run_directory"]).is_relative_to(failed_attempt),
+             "one unchanged accepted predecessor repeat required")
+    command_path = Path(row["command_file"])
+    _require(command_path.is_file() and not command_path.is_symlink(), "original command file missing")
+    read_verified_campaign_repeat(valid[0], command=command_path.read_text().strip(),
+        command_contract_sha256=row["successful_command_contract_sha256"], duration_s=60,
+        require_ab=bool((plan.get("window_method_ab") or {}).get("enabled")),
+        require_environment_observation=True)
+    evidence[previous] = partial
+    index = normalized.index("--previous-results")
+    del normalized[index:index + 2]
+    return normalized
+
+
 def recover_finite_run_fence(run, output, session, lock, fence, failed_attempt):
     """Run-lock acquire callback for the LIVE authorized replacement parent.
 
@@ -240,7 +282,7 @@ def recover_finite_run_fence(run, output, session, lock, fence, failed_attempt):
              and all(new_action.get(key) == old_action.get(key) for key in (
                  "engine_build_allowed", "automatic_controller_restart", "runs", "duration_s", "target",
                  "normal_quality_admission", "native_remote_source_epoch", "resource_keys"))
-             and isinstance(new_argv, list) and len(new_argv) == len(old_argv),
+             and isinstance(new_argv, list),
              "replacement action scope differs")
     freeze = _read(_descriptor(new_action.get("source_freeze")))
     _require(freeze.get("pushed") is True and freeze.get("commit") == freeze.get("remote_branch_head")
@@ -253,7 +295,8 @@ def recover_finite_run_fence(run, output, session, lock, fence, failed_attempt):
     if "--completed-row-validator" in expected:
         index = expected.index("--completed-row-validator") + 1
         expected[index] = expected[index].replace(str(failed_attempt) + "/", str(output) + "/")
-    _require(new_argv == expected, "replacement scientific/runtime argv changed")
+    normalized_argv = _replacement_argv(new_action, old_action, run, failed_attempt, evidence)
+    _require(normalized_argv == expected, "replacement scientific/runtime argv changed")
     profile_bytes = profile_path.read_bytes(); new_action_bytes = new_action_path.read_bytes()
     for pid, ticks in ((cfg["parent_pid"], cfg["parent_start_ticks"]),
                        (request["owner_pid"], request["owner_start_ticks"]),

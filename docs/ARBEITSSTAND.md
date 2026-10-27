@@ -4858,3 +4858,9 @@ und Limits bleiben erhalten; ein neuer Controller-/Outputpfad ändert keine
 Messparameter. Die historische erste Run-Lock-Datei ohne Sessionfeld wird nur
 über ihre tatsächlichen Start-/Cleanup-/Journalbelege gebunden; ein vorhandenes
 abweichendes Sessionfeld wird abgewiesen. Die Recovery startet keine Messung.
+
+Der endliche Recovery-Aufruf darf außerdem das bestehende
+`--previous-results` für die exakte, hashgebundene Partialdatei seines
+abgeschlossenen Vorgängers weiterreichen. Dessen gültiger Repeat wird über
+die vorhandene normale Budget-, Source-, Preflight- und Umgebungsprüfung
+verifiziert; Messparameter und verbleibende Repeatsteuerung bleiben unverändert.

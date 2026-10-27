@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 544985,
-      "sha256": "6233cb9fcfab088342043e5a54e2e4b49059a0af756b8aa51bda6095c973a72a"
+      "size": 545351,
+      "sha256": "527ca638d84f75029edf309c5491849a173d8daecc9810ae128af902d2906bcb"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3171,8 +3171,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/finite_native_energy_recovery.py",
-      "size": 20566,
-      "sha256": "a778dd35d7d9896e9dbcae88cf810af2c5460e2846bb95f522e286133b78bb43"
+      "size": 23491,
+      "sha256": "8098f83983fb34d0517014b99a474b311c0a64c201356157a3eeccad25f89788"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/full_only_quality_canary.py",
@@ -7451,8 +7451,8 @@
     },
     {
       "path": "tests/test_finite_native_energy_recovery.py",
-      "size": 12963,
-      "sha256": "32ea1cc68c6886ea842a072e2939075c23acfc2bebaeee6d5b4d1cd8e8c13bf7"
+      "size": 16030,
+      "sha256": "fa840fddc3be6dff1cb14124c541f0ed1997691add1e8371fe27517a38fddd97"
     },
     {
       "path": "tests/test_frozen_audit_generation_scope.py",

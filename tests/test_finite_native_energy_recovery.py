@@ -38,8 +38,10 @@ def finite_case(recovery_case):
     digest = canonical_json_sha256(contract); contract["contract_sha256"] = digest
     output = c.run_dir / "reports/energy"
     contract_path = output / "plan/task.command_contract.json"; _write(contract_path, contract)
+    command_path = output / "plan/task.sh"; command_path.write_text("fixture unchanged Native command\n")
     row = {**fields, "successful_command_contract_sha256": digest,
            "measurement_output_base_dir": str(output), "command_contract_file": str(contract_path),
+           "command_file": str(command_path),
            "command_contract_file_sha256": descriptor(contract_path)["sha256"],
            "energy_quality_admission": {"admission_scope": "native_dataset_energy", "diagnostic_only": False}}
     plan = output / "plan/native_producer_energy_plan.json"; _write(plan, {"rows": [row]})
@@ -208,3 +210,55 @@ def test_live_handoff_denies_foreign_session_or_replacement(finite_case, monkeyp
             c.run_dir, c.replacement, "new-explicit-session", lock, fence, c.run_dir))
     assert c.run_lock.quarantine_path.exists()
     assert (c.run_dir / "energy_task_budget.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("fault", [None, "foreign_file", "hash", "changed_science"])
+def test_previous_results_only_preserves_the_bound_normal_budget_repeat(finite_case, monkeypatch, fault):
+    from onnx_splitpoint_tool.energy import task_budget
+    c = finite_case
+    budget_path = c.run_dir / "energy_task_budget.json"; budget = _read(budget_path)
+    accepted = copy.deepcopy(budget["tasks"][c.row_id]["chains"][0])
+    accepted.update(run_directory=str(c.run_dir / "reports/energy/accepted_run_000"),
+                    valid=True, source_completion_verified=True, transport_reasons=[])
+    budget["tasks"][c.row_id]["chains"].insert(0, accepted); _write(budget_path, budget)
+    plan = _read(c.run_dir / "reports/energy/plan/native_producer_energy_plan.json")
+    partial = c.run_dir / "reports/energy/native_producer_energy_results.partial.json"
+    _write(partial, {"complete": False, "plan_payload": plan, "rows": [{"row": plan["rows"][0]}]})
+    action_path = c.replacement / "ACTION.json"; action = _read(action_path)
+    selected = partial
+    if fault == "foreign_file":
+        selected = c.run_dir / "foreign.partial.json"; selected.write_bytes(partial.read_bytes())
+    action["argv"] += ["--previous-results", str(selected)]
+    action["input_descriptors"].append(descriptor(selected))
+    if fault == "hash":
+        partial.write_text(partial.read_text() + " ")
+    elif fault == "changed_science":
+        action["argv"][action["argv"].index("--runs") + 1] = "2"
+    _write(action_path, action)
+    checked = []
+    def existing_normal_verifier(chain, **kwargs):
+        assert chain == accepted
+        assert kwargs["duration_s"] == 60 and kwargs["require_environment_observation"] is True
+        assert kwargs["command_contract_sha256"] == plan["rows"][0]["successful_command_contract_sha256"]
+        checked.append(chain)
+        return {"final_energy_gate_status": "pass"}
+    monkeypatch.setattr(task_budget, "read_verified_campaign_repeat", existing_normal_verifier)
+    resource_recovery.recover_capture_resources(**c.kwargs)
+    before = _read(budget_path)
+    lock = EvaluationRunLock(out_root=c.run_dir.parent, run_dir=c.run_dir,
+        owner={"purpose": "six_pack_native_energy", "session_id": "two-missing-only"})
+    callback = lambda fence: finite.recover_finite_run_fence(
+        c.run_dir, c.replacement, "two-missing-only", lock, fence, c.run_dir)
+    if fault is not None:
+        with pytest.raises(ValueError):
+            lock.acquire(recover_quarantine=callback)
+        assert c.run_lock.quarantine_path.exists()
+        assert _read(budget_path) == before
+    else:
+        lock.acquire(recover_quarantine=callback)
+        try:
+            assert checked == [accepted]
+            assert _read(budget_path)["tasks"] == before["tasks"]
+            assert _read(budget_path)["tasks"][c.row_id]["chains"][0] == accepted
+        finally:
+            lock.release()
