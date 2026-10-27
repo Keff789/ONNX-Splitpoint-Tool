@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2434,
+  "file_count": 2435,
   "files": [
     {
       "path": ".gitignore",
@@ -411,8 +411,8 @@
     },
     {
       "path": "docs/NATIVE_DATASET_QUALITY.md",
-      "size": 5604,
-      "sha256": "9eecb05ee71db9cadc2c12606e2b93ec5e3f4651765bc6e955841acb18de8e8e"
+      "size": 6226,
+      "sha256": "0cd6bac0aaaef683cade2eb61729e4beba95ea27eda881cb4a1c5e470294f4b7"
     },
     {
       "path": "docs/NATIVE_HAILORT_TRT_FIFO_FASTPATH.md",
@@ -1366,8 +1366,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/native_dataset_quality.py",
-      "size": 16748,
-      "sha256": "19985af40f1b65f9940c75b5d3f103b57e815732bfc59617649d2ee758051a84"
+      "size": 19602,
+      "sha256": "f1fd0eb529669cc14d46f9e67c927a2f5e90be7e2845c965f83e8780605b430a"
     },
     {
       "path": "onnx_splitpoint_tool/native_dataset_quality_consumer.py",
@@ -3291,8 +3291,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/native_dataset_quality.py",
-      "size": 14091,
-      "sha256": "a05686807b0086691239eefffdeb72c17f01a28b6d4de59e29f98eef88e61c19"
+      "size": 15472,
+      "sha256": "f7317f5147a9e6d9dee4e4eddd59e5a4ce515a145cc4539573fba66a7cffb502"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/native_energy_parent.py",
@@ -7983,6 +7983,11 @@
       "path": "tests/test_native_dataset_quality_h8.py",
       "size": 13269,
       "sha256": "0b97ee0a3d85eca799d2d0ccbdbcaf2132432f5820d078b4546cf8683e835b60"
+    },
+    {
+      "path": "tests/test_native_dataset_quality_probe.py",
+      "size": 5331,
+      "sha256": "aa55f541482321199651b71f06cf304dd2b0fe63201818dc6cb2b79dcb176532"
     },
     {
       "path": "tests/test_native_dataset_quality_workflow.py",

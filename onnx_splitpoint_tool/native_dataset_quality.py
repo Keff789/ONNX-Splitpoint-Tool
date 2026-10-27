@@ -69,6 +69,50 @@ def _timed_model_identity(timed, identity):
     return aliases[0]
 
 
+def _load_completion_source_probe(config, timed):
+    """Load the actual measured Native source snapshot for contract inference."""
+    from .native_output_endpoint import load_manifest_outputs
+    from .native_three_stage import verify_fast_completion_dump_binding
+    descriptor = config['completion_source_probe_manifest']
+    manifest = checked_json(descriptor)
+    attestation = timed['completion_execution_attestation']
+    if (manifest.get('schema') != 'onnx-splitpoint/native-output-dump'
+            or manifest.get('dump_inference_scope') != 'last_measured_completion_source_outputs'
+            or manifest.get('completion_sentinel_identity') != timed.get('completion_sentinel_identity')
+            or manifest.get('completion_attestation_sha256') != attestation.get('attestation_sha256')):
+        raise ValueError('Native dataset Quality source probe is not the measured Native completion')
+    verify_fast_completion_dump_binding(attestation, manifest, timed)
+    path = Path(descriptor['path'])
+    rows = manifest.get('outputs')
+    if not isinstance(rows, list) or not rows:
+        raise ValueError('Native dataset Quality measured source probe outputs missing')
+    for row in rows:
+        relative = Path(str(row.get('file') or ''))
+        if not relative.name or relative.name != str(relative):
+            raise ValueError('Native dataset Quality source probe file must be a relative filename')
+        actual = file_descriptor(path.parent / relative)
+        if any(actual[key] != row.get(key) for key in ('sha256', 'size_bytes')):
+            raise ValueError('Native dataset Quality measured source probe bytes changed')
+    outputs = load_manifest_outputs(path, manifest)
+    if len(outputs) != len(rows):
+        raise ValueError('Native dataset Quality measured source probe cannot be loaded')
+    verify_fast_completion_attestation(attestation,
+        execution_contract=timed['completion_execution_contract'], outputs=outputs)
+    for output in outputs.values():
+        output.setflags(write=False)
+    return outputs
+
+
+def _completion_source_outputs(config, signature):
+    samples = config.get('_completion_source_probe_outputs')
+    if samples is None:
+        return {name: np.zeros(spec['shape'], dtype=spec['dtype']) for name, spec in signature.items()}
+    actual = {name: {'shape': list(value.shape), 'dtype': str(value.dtype)} for name, value in samples.items()}
+    if actual != signature:
+        raise ValueError('Native dataset Quality measured source probe differs from actual engine signature')
+    return samples
+
+
 def load_capture_config(path: str | Path) -> dict[str, Any]:
     path = Path(path).resolve(strict=True)
     config = json.loads(path.read_text())
@@ -133,6 +177,10 @@ def load_capture_config(path: str | Path) -> dict[str, Any]:
         raise ValueError('Native dataset Quality timed runtime mode differs')
     if not (type(timed.get('completed_frames')) is int and timed['completed_frames'] > 0):
         raise ValueError('Native dataset Quality timed completed source missing')
+    if config.get('completion_source_probe_manifest'):
+        config['_completion_source_probe_outputs'] = _load_completion_source_probe(config, timed)
+    elif config['timed_completion_contract'].get('model_family') == 'yolov7':
+        raise ValueError('Native dataset Quality raw YOLOv7 requires actual measured source probe')
     config['_ground_truth_records'] = rows
     config['_config_file'] = file_descriptor(path)
     return config
@@ -161,7 +209,7 @@ def _sources(paths) -> list[dict[str, Any]]:
 
 
 def _completion_contract(config, signature, image):
-    dummy = {name: np.zeros(spec['shape'], dtype=spec['dtype']) for name, spec in signature.items()}
+    dummy = _completion_source_outputs(config, signature)
     declaration = load_authoritative_output_contract(
         Path(config['native']['benchmark_set']), backend='tensorrt',
         model_id=config['identity']['model_id'], variant='full', task='detection')

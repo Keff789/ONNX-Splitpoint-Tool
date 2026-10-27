@@ -26,6 +26,15 @@ the FIFO's own normal completion attestation, verified with the existing strict
 or fast verifier. There is no additional host NMS. A raw-head model still runs
 the decode/NMS already present in its timed Native completion path.
 
+Raw YOLOv7 contract construction uses the actual retained measured Native
+source snapshot through `completion_source_probe_manifest`. Its unchanged
+normal dump manifest and binary tensors are hash checked, joined to the timed
+completion sentinel and replayed by the existing fast-attestation verifier.
+They are loaded once, checked against the live engine signature and used only
+to construct the normal completion contract. No fabricated tensor values choose
+an activation mode; all 5000 candidate observations still come from fresh Native
+inference. The controller stages these small probe files without changing them.
+
 The exporter publishes `native_completion_evidence.json`,
 `composed_candidate.json`, then `composed_request.json`, each into a fresh
 directory. The ordinary central Quality envelope carries a fresh
