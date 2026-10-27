@@ -265,13 +265,29 @@ def _paired_hailo_input(native, command, config, prepared, completed):
           "paired original owned Hailo bridge boundary differs")
     comparison = completed.get("representative_input_comparison") or {}
     rgb = comparison.get("prepared_tensor") or {}
+    logical_slots = (options.get("runtime_input_shapes") == {"images": prepared.get("shape")}
+        and options.get("runtime_output_shapes") == {boundary["boundary_tensor_name"]: shape}
+        and options.get("canonical_input_slot_names") == ["images"]
+        and options.get("canonical_output_slot_names") == [boundary["boundary_tensor_name"]])
+    # The original command binds the single actual input and prepared bytes.
+    # Compiled HEF output names/shapes come from normally sealed metadata.
+    metadata = bridge.get("boundary_metadata_payload") or {}
+    tensor = metadata.get("boundary_tensor") or {}
+    runtime_name = tensor.get("runtime_name")
+    inputs = options.get("canonical_input_slot_names")
+    compiled_slots = (metadata.get("boundary_tensor_count") == 1
+        and tensor.get("name") == boundary["boundary_tensor_name"]
+        and tensor.get("shape") == shape and tensor.get("dtype") == "uint8"
+        and isinstance(runtime_name, str) and bool(runtime_name)
+        and isinstance(inputs, list) and len(inputs) == 1
+        and isinstance(inputs[0], str) and bool(inputs[0])
+        and options.get("runtime_input_shapes") == {inputs[0]: prepared.get("shape")}
+        and options.get("runtime_output_shapes") == {runtime_name: shape}
+        and options.get("canonical_output_slot_names") == [runtime_name])
+    _need(logical_slots or compiled_slots, "paired original Hailo prepared slots differ")
     _need(prepared.get("format") == "npy" and prepared.get("dtype") == rgb.get("dtype") == "uint8"
           and rgb.get("shape") == prepared.get("shape")
           and (comparison.get("actual_runtime_input") or {}).get("images") == rgb
-          and options.get("runtime_input_shapes") == {"images": prepared.get("shape")}
-          and options.get("runtime_output_shapes") == {boundary["boundary_tensor_name"]: shape}
-          and options.get("canonical_input_slot_names") == ["images"]
-          and options.get("canonical_output_slot_names") == [boundary["boundary_tensor_name"]]
           and (command.get("artifacts", {}).get("prepared_input_00") or {}).get("sha256") == prepared.get("sha256"),
           "paired original Hailo prepared input differs")
     return _sha(rgb.get("tensor_sha256"))
@@ -339,8 +355,6 @@ def _admit(target, binding):
           "original FPS measurement/input method differs")
     fps_contract = verify_detection_completion_execution_contract(fps.get("completion_contract"))
     q_contract = verify_detection_completion_execution_contract(config.get("completion_contract"))
-    _need(not hailo_paired or fps_contract["completion_mode"] == "raw_head_frozen_decode_nms",
-          "paired Hailo operator family unsupported")
     _need(runtime.get("completion_contract") == fps_contract
           and original.get("completion_contract") == fps_contract,
           "original FPS frozen contract differs")
