@@ -1924,6 +1924,9 @@ def _bounded_energy_journal(run, session_id, attempt_dir):
     _require(attempt.is_absolute() and attempt.is_dir() and not attempt.is_symlink()
              and attempt.resolve().is_relative_to(run), "invalid bounded energy attempt")
     attempt = attempt.resolve()
+    if (attempt / "ACTION.json").is_file():
+        from ..workflow.finite_native_energy_recovery import finite_native_energy_journal
+        return finite_native_energy_journal(run, session_id, attempt)
     read = RemoteProcessLeaseJournal._read_json_exact
     evidence = {}
     for name in ("production-start.json", "production-result.json", "cleanup-status.json"):
@@ -2305,6 +2308,12 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
     attempt = Path(str(request.get("attempt_dir") or ""))
     _require(attempt.is_absolute() and not attempt.is_symlink()
              and attempt.resolve().is_relative_to(run), "capture attempt outside run")
+    if bounded_energy_attempt_dir is not None and (Path(bounded_energy_attempt_dir) / "ACTION.json").is_file():
+        from ..workflow.finite_native_energy_recovery import finite_native_predecessor
+        finite = finite_native_predecessor(run, bounded_energy_attempt_dir)
+        _require(finite[0] == directory and finite[1] == request and finite[2] == reply,
+                 "finite Native capture differs from its original action")
+        rest_evidence.update(finite[4])
     generic_plan = rest_evidence.get(run / "parent_plan.json")
     if generic_plan is not None:
         normal_path, _ = _bounded_generic_capture(run, Path(bounded_energy_attempt_dir).resolve(), rest_evidence)

@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2437,
+  "file_count": 2439,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 544066,
-      "sha256": "667c73347524de8234a4819629388d43ad4bcbd57238ed45e7e96d0b91194f1c"
+      "size": 544985,
+      "sha256": "6233cb9fcfab088342043e5a54e2e4b49059a0af756b8aa51bda6095c973a72a"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1636,8 +1636,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery.py",
-      "size": 182200,
-      "sha256": "c80587e2927ccab744dcf17baf30508a6c9e6d2bc2fb4019324183f463f52198"
+      "size": 182883,
+      "sha256": "d12f4efef18a7a6adb303f4978dc4b96fa1a886dd76557bf571dfff4ba5d88a4"
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery_observation.py",
@@ -3168,6 +3168,11 @@
       "path": "onnx_splitpoint_tool/workflow/execution_binding.py",
       "size": 282971,
       "sha256": "be7f2a78785e0f1ea0d889a89b56ec510b5a0ac3b8c61acd2a388942400e1a47"
+    },
+    {
+      "path": "onnx_splitpoint_tool/workflow/finite_native_energy_recovery.py",
+      "size": 20566,
+      "sha256": "a778dd35d7d9896e9dbcae88cf810af2c5460e2846bb95f522e286133b78bb43"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/full_only_quality_canary.py",
@@ -7443,6 +7448,11 @@
       "path": "tests/test_final_h8_classifier_reference_feed.py",
       "size": 9221,
       "sha256": "e5e4f2e7b98632cb92df8151ca81a6c534a1d5d1078e89bfc56c600c8e634c82"
+    },
+    {
+      "path": "tests/test_finite_native_energy_recovery.py",
+      "size": 12963,
+      "sha256": "32ea1cc68c6886ea842a072e2939075c23acfc2bebaeee6d5b4d1cd8e8c13bf7"
     },
     {
       "path": "tests/test_frozen_audit_generation_scope.py",

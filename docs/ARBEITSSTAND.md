@@ -4844,3 +4844,17 @@ Er gibt keine VendorFull-/TensorRTFull-Vergleichsautorität frei. Der normale
 Executor kontrolliert die Quellen vor der Messung erneut. Inferenz, FPS- und
 Energie-Hotloop, Collector, Kalibrierung, Dauer, Wiederholungen, Zähler und
 Drain bleiben unverändert. Softwaretests und reale Messbelege bleiben getrennt.
+
+### Explizite Recovery eines endlichen Native-Energieaufrufs
+
+Der normale Recovery-Leser unterstützt das tatsächliche Standalone-Layout
+`ACTION.json`, `production-start.json`, `production-result.json` und
+`CLEANUP_STATUS.json`, ohne Legacy-Phasen oder EvaluationRun-Manifeste zu erzeugen.
+Die bestehenden vier Ressourcenprüfungen, aktuelle Ownership-Beobachtung und
+explizite Recovery-Autorisierung bleiben erforderlich. Ein lebender neuer Parent
+kann anschließend ausschließlich denselben logischen Run und das bereits
+verbrauchte Budget übernehmen. Fehlgeschlagener Capture, Source-STOP, Zähler
+und Limits bleiben erhalten; ein neuer Controller-/Outputpfad ändert keine
+Messparameter. Die historische erste Run-Lock-Datei ohne Sessionfeld wird nur
+über ihre tatsächlichen Start-/Cleanup-/Journalbelege gebunden; ein vorhandenes
+abweichendes Sessionfeld wird abgewiesen. Die Recovery startet keine Messung.
