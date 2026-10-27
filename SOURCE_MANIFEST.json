@@ -411,8 +411,8 @@
     },
     {
       "path": "docs/NATIVE_DATASET_QUALITY.md",
-      "size": 4624,
-      "sha256": "cfe2df79258cecd1394959fb94c4431c3fd3cd8ed32d12f1862d729bb33a399a"
+      "size": 5084,
+      "sha256": "44a61f09c020723c0bb3ed227f84164bdfb1f090c0a9318bb2dc8bb157119888"
     },
     {
       "path": "docs/NATIVE_HAILORT_TRT_FIFO_FASTPATH.md",
@@ -1366,8 +1366,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/native_dataset_quality.py",
-      "size": 15629,
-      "sha256": "e09c1233f70e3982cb68da2c9d40b2c74e15908d4c4ac499a06bf4e4b2a6d9ed"
+      "size": 16748,
+      "sha256": "19985af40f1b65f9940c75b5d3f103b57e815732bfc59617649d2ee758051a84"
     },
     {
       "path": "onnx_splitpoint_tool/native_dataset_quality_consumer.py",
@@ -3291,8 +3291,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/native_dataset_quality.py",
-      "size": 12336,
-      "sha256": "196f312a910895c1a6c4c0a5fcafcad1f20970e51a0dea5a6d7854b0ad1cf920"
+      "size": 14091,
+      "sha256": "a05686807b0086691239eefffdeb72c17f01a28b6d4de59e29f98eef88e61c19"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/native_energy_parent.py",
@@ -7956,8 +7956,8 @@
     },
     {
       "path": "tests/test_native_dataset_quality_capture.py",
-      "size": 18782,
-      "sha256": "1e897432d0591e03db134d3e5f117d8513f6e4105f643b108c45f930109f93c7"
+      "size": 20289,
+      "sha256": "b471c2711171fd4b3d58714c949ba2b1f75cef1e3cf609478e9da0eb49af61fd"
     },
     {
       "path": "tests/test_native_dataset_quality_closure.py",
@@ -7986,8 +7986,8 @@
     },
     {
       "path": "tests/test_native_dataset_quality_workflow.py",
-      "size": 15667,
-      "sha256": "5fb94b775b9f9344f289fc680cf87d7845bec710df86691dfc61e044ef28a71c"
+      "size": 17411,
+      "sha256": "a761ea5154b71cb5abfb23c62a40edd8f60499c2a8d9ea1ec31ca8e1f4e1f086"
     },
     {
       "path": "tests/test_native_fairness_report_statistics.py",

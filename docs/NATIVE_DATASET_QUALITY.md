@@ -65,6 +65,13 @@ The remote command unsets `ONNX_SPLITPOINT_ARTIFACT_POLICY`: its Generic
 Native no-build enforcement is independent, using existing sealed artifacts,
 direct NativeTRT opening and `ONNX_SPLITPOINT_NATIVE_TRT_BUILD=0`.
 
+An H8 timed result may carry its model only inside the sealed Native command.
+The config loader derives that missing alias only after the existing complete
+Native command verifier succeeds; present aliases must agree. The launcher
+also reuses the exact process-local Hailo site directories from that verified
+command in `SPLITPOINT_EXTRA_SITES` for the child process. A supplied conflicting
+site list is rejected; global Python environments are not modified.
+
 Focused CPU tests exercise actual existing FIFO/completion functions with
 injected hardware, distinct image geometries, export/normal-loader integration,
 negative evidence/source/image cases, isolated cold-stage imports, immutable CPU
