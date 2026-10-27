@@ -2569,7 +2569,7 @@ def _managed_energy_invocation_hash(
         if key not in excluded
     }
     for field in ('campaign_cohort','completed_row_validator','require_environment_observation','environment_run_id',
-                  'capture_admission_file','capture_admission_sha256','capture_admission_hook'):
+                  'capture_admission_file','capture_admission_sha256','capture_admission_hook','native_dataset_quality'):
         if not options.get(field): options.pop(field,None)
 
     def _bound_file(value: Any) -> dict[str, Any]:
@@ -2592,6 +2592,8 @@ def _managed_energy_invocation_hash(
         'summary': _bound_file(namespace.summary),
         'validation_summary': _bound_file(namespace.validation_summary),
         'hardware_registry': _bound_file(namespace.hardware_setups_file),
+        **({'native_dataset_quality': [_bound_file(path) for path in namespace.native_dataset_quality]}
+           if getattr(namespace, 'native_dataset_quality', []) else {}),
         'runner_sha256': hashlib.sha256(
             Path(__file__).resolve().read_bytes()
         ).hexdigest(),
@@ -3289,6 +3291,8 @@ def _main_impl() -> int:
         help='Exact hardware registry propagated to every claim-bearing measurement.',
     )
     ap.add_argument('--validation-summary', default='', help='Native semantic validation summary archived as a post-hoc annotation.')
+    ap.add_argument('--native-dataset-quality', action='append', default=[],
+                    help='Closed normal Native dataset-quality case forwarded unchanged to the planner; repeat per standalone row.')
     ap.add_argument('--hailo8-ssh', default='')
     ap.add_argument('--hailo10-ssh', default='')
     ap.add_argument('--deepx-ssh', default='')
@@ -3690,6 +3694,8 @@ def _main_impl() -> int:
         plan_cmd.append('--final-all-split-energy')
     if ns.validation_summary:
         plan_cmd += ['--validation-summary', ns.validation_summary]
+    for case_record in ns.native_dataset_quality:
+        plan_cmd += ['--native-dataset-quality', case_record]
     if ns.previous_results or ns.campaign_cohort:
         plan_cmd.append('--reuse-campaign-repeats')
     print(f"[native-energy] PLAN_START summary={ns.summary}", flush=True)

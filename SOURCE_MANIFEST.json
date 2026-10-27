@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2436,
+  "file_count": 2437,
   "files": [
     {
       "path": ".gitignore",
@@ -2056,8 +2056,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/remote_scripts/run_native_producer_energy_from_summary.py",
-      "size": 237572,
-      "sha256": "8145ff0d294dafb6f9d8e077ae1b1b586c82e6e2df60b7578fb5be1b89f013a6"
+      "size": 238096,
+      "sha256": "dde6782831f9a8d6e33ad5998464f4024aa65c20dd22a54b50d971468dfecb7d"
     },
     {
       "path": "onnx_splitpoint_tool/resources/remote_scripts/run_window_method_validation_probe.py",
@@ -4731,8 +4731,8 @@
     },
     {
       "path": "scripts/run_native_producer_energy_from_summary.py",
-      "size": 237572,
-      "sha256": "8145ff0d294dafb6f9d8e077ae1b1b586c82e6e2df60b7578fb5be1b89f013a6"
+      "size": 238096,
+      "sha256": "dde6782831f9a8d6e33ad5998464f4024aa65c20dd22a54b50d971468dfecb7d"
     },
     {
       "path": "scripts/run_reference_workflow_v2804.sh",
@@ -7958,6 +7958,11 @@
       "path": "tests/test_native_dataset_energy_authority.py",
       "size": 12433,
       "sha256": "273c569d0fc2c20f2104ad1b2269da5c0ae9dd9cff07eb6be30ff7348f25bac1"
+    },
+    {
+      "path": "tests/test_native_dataset_energy_entry.py",
+      "size": 2126,
+      "sha256": "8041c59b2439ec13f064f6ededd9a9f4961812f07649566771aeba97acc5a740"
     },
     {
       "path": "tests/test_native_dataset_quality_capture.py",
