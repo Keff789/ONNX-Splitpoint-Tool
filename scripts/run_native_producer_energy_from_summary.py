@@ -494,6 +494,10 @@ def _verify_split_energy_quality_binding(
     admission_scope: str = "",
 ) -> tuple[str, str]:
     """Verify the plan-local Quality-first seal before a measurement."""
+    if (row.get("native_split_energy_quality_binding") or {}).get("schema") == (
+            "onnx-splitpoint/native-dataset-energy-quality-authority"):
+        from onnx_splitpoint_tool.native_split_quality_authority import verify_native_dataset_energy_binding
+        return verify_native_dataset_energy_binding(row)
     runtime_observation = (
         admission_scope == "native_runtime_observation"
     )
@@ -2608,7 +2612,7 @@ def _energy_quality_result_projection(
         else {}
     )
     qualified = bool(
-        str(admission.get('admission_scope') or '') == 'native_energy'
+        str(admission.get('admission_scope') or '') in {'native_energy', 'native_dataset_energy'}
         and admission.get('central_quality_evidence_verified') is True
         and admission.get('precision_quality_binding_verified') is True
         and admission.get('task_quality_observation_valid') is True
@@ -2616,7 +2620,8 @@ def _energy_quality_result_projection(
         and admission.get('quality_provenance_complete') is True
         and admission.get('quality_claim_result_verified') is True
         and admission.get('diagnostic_only') is False
-        and admission.get('claim_comparable') is True
+        and (admission.get('claim_comparable') is True if admission.get('admission_scope') == 'native_energy'
+             else admission.get('claim_comparable') is False and admission.get('full_baseline_comparison_released') is False)
         and admission.get('energy_claim_eligible') is True
     )
     if not measurement_started:

@@ -110,6 +110,10 @@ try:
         is_native_split_backend,
         native_split_quality_required_for_row,
         resolve_native_split_quality_authority,
+        native_dataset_energy_inputs,
+        native_dataset_energy_identity,
+        resolve_native_dataset_energy_quality,
+        is_verified_native_dataset_quality,
     )
 except Exception:  # pragma: no cover - standalone copy must fail closed
     apply_native_split_quality_authority = None
@@ -117,6 +121,8 @@ except Exception:  # pragma: no cover - standalone copy must fail closed
     is_native_split_backend = None
     native_split_quality_required_for_row = None
     resolve_native_split_quality_authority = None
+    native_dataset_energy_inputs = native_dataset_energy_identity = resolve_native_dataset_energy_quality = None
+    is_verified_native_dataset_quality = lambda value: False
 
 try:
     from onnx_splitpoint_tool.native_detection_diagnostics import (
@@ -789,6 +795,13 @@ def _current_quality_first_validation_join(
     """Require the exact Final↔Validation identity and Central selection."""
     if not isinstance(validation, Mapping):
         return False, "native_split_quality_validation_missing"
+    fresh = row.get("_native_dataset_quality")
+    if is_verified_native_dataset_quality(fresh):
+        evidence = fresh["evidence"]
+        valid = (validation.get("native_dataset_quality_authority_sha256") == evidence["evidence_sha256"]
+            and _validation_identity(dict(row)) == _validation_identity(dict(validation))
+            and (not require_performance_claim or validation.get("accuracy_gate_pass") is True))
+        return valid, "fresh_native_dataset_quality_identity_join" if valid else "fresh_native_dataset_quality_identity_drift"
     row_identity = _validation_identity(dict(row))
     validation_identity = _validation_identity(dict(validation))
     if any(not value for value in row_identity):
@@ -1583,6 +1596,12 @@ def _split_quality_energy_evidence(
     collected semantic manifests and every referenced tensor again, and also
     repeats the portable binding/command/consumer-attestation join.
     """
+    fresh = row.get("_native_dataset_quality")
+    if is_verified_native_dataset_quality(fresh):
+        evidence = fresh["evidence"]
+        if command.get("contract_sha256") != evidence["native_command_contract_sha256"]:
+            return None, "native_dataset_energy_command_drift"
+        return dict(evidence), evidence["native_split_energy_binding_status"]
     marker_fields = (
         "native_split_quality_binding", "native_split_quality_binding_sha256",
         "native_split_quality_eval_run_id", "native_split_quality_source_run_id",
@@ -2046,6 +2065,10 @@ def _planned_quality_provenance(
     """
     identity, conflicts = _validated_quality_provenance(validation)
     evidence = row.get("_split_quality_energy_evidence")
+    if isinstance(evidence, Mapping) and evidence.get("authority_kind") == "native_dataset_quality":
+        if identity["source_request_sha256"] != evidence["source_request_sha256"]:
+            raise ValueError("native_dataset_energy_quality_source_request_drift")
+        return identity, conflicts
     if not isinstance(evidence, Mapping) or evidence.get("native_split_quality_required") is not True:
         return identity, conflicts
     if evidence.get("native_split_energy_binding_valid") is not True:
@@ -2284,6 +2307,11 @@ def _prepair_energy_quality_admission(
             and not window_method_validation_probe
         ),
     }
+    if is_verified_native_dataset_quality(row.get("_native_dataset_quality")):
+        admission.update(admission_scope="native_dataset_energy", diagnostic_only=False,
+            screening_comparable=False, claim_comparable=False,
+            energy_claim_eligible=bool(accuracy_value), full_baseline_comparison_released=False,
+            native_dataset_quality_authority_sha256=row["_native_dataset_quality"]["evidence"]["evidence_sha256"])
     # Preserve the observed local decision before any cohort-level downgrade.
     local_validation = validation if isinstance(validation, Mapping) else {}
     local_decision = next((str(local_validation.get(key)).strip().lower()
@@ -3795,6 +3823,8 @@ def main() -> int:
     add_capture_admission_arguments(parser)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--validation-summary", default="")
+    parser.add_argument("--native-dataset-quality", action="append", default=[],
+        help="Actual NORMAL_COMPLETED_CASE.json for a fresh closed Native capture and normal central result; repeat per standalone Native row.")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
         "--hardware-setups-file",
@@ -4063,6 +4093,14 @@ def main() -> int:
             "native_expected_matrix.json"
         )
     split_quality_authority = _energy_split_quality_authority(summary_path)
+    if ns.native_dataset_quality and native_dataset_energy_inputs is None:
+        raise ValueError("native_dataset_energy_quality_verifier_unavailable")
+    native_dataset_inputs = native_dataset_energy_inputs(ns.native_dataset_quality) if ns.native_dataset_quality else {}
+    if native_dataset_inputs:
+        split_quality_authority = {"schema": "onnx-splitpoint/native-split-quality-authority", "schema_version": 1,
+            "authority_kind": "native_dataset_quality", "mode": "native_dataset_quality", "valid": True,
+            "native_split_quality_required": True, "errors": [],
+            "published_completed_cases": list(native_dataset_inputs.values())}
     historical_diagnostic_only = _historical_energy_diagnostic_only(
         split_quality_authority
     )
@@ -4078,6 +4116,8 @@ def main() -> int:
         validation_path
     )
     all_source_rows = _load_rows(summary_path)
+    if native_dataset_inputs and any(str(row.get("backend") or "").startswith("native_full_") for row in all_source_rows):
+        raise ValueError("native_dataset_energy_requires_a_standalone_Native_split_summary")
     source_rows = [
         row for row in all_source_rows
         if _runtime_successful_for_energy(row)
@@ -4352,6 +4392,22 @@ def main() -> int:
                     "reason": split_part2_input_status,
                 })
                 continue
+        row_validations = validations
+        if native_dataset_inputs and split_backend:
+            key = native_dataset_energy_identity(row)
+            if key not in native_dataset_inputs:
+                raise ValueError("native_dataset_energy_exact_completed_case_missing:" + str(key))
+            fresh = resolve_native_dataset_energy_quality(native_dataset_inputs[key], row, command_contract)
+            row = dict(row)
+            row["native_dataset_quality_FPS_source"] = {key: row[key] for key in (
+                "backend", "model", "case", "setup_id", "precision", "comparison_backend", "report", "source_reports",
+                "native_command_contract", "native_command_contract_sha256", "native_split_quality_binding", "stage", "contract_family",
+                "repetition_count_valid", "fps_repetition_samples") if key in row}
+            row["native_dataset_quality_FPS_source"]["repetition_records"] = [
+                {key: record[key] for key in ("runtime_instance_id", "fps_makespan") if key in record}
+                for record in row.get("repetition_records", [])]
+            row["_native_dataset_quality"] = fresh
+            row_validations = {_validation_identity(row): fresh["validation"]}
         current_quality_first_split = bool(
             split_backend
             and split_quality_authority.get("valid") is True
@@ -4360,7 +4416,7 @@ def main() -> int:
         if ns.measure_all_runtime_successful:
             validation = _validation_for_row(
                 row,
-                validations,
+                row_validations,
                 exact_identity_required=current_quality_first_split,
             )
             accepted = True
@@ -4371,10 +4427,10 @@ def main() -> int:
             # energy/performance claim.  Native semantic/full-pair gates remain
             # unchanged for the scientific Native Energy plan below.
             accepted, reason = True, "screening_probe_runtime_success"
-            validation = _validation_for_row(row, validations)
+            validation = _validation_for_row(row, row_validations)
         elif ns.smoke_diagnostic:
             validation = _validation_for_row(
-                row, validations,
+                row, row_validations,
                 exact_identity_required=True,
             )
             if split_backend:
@@ -4412,7 +4468,7 @@ def main() -> int:
                     )
         else:
             accepted, reason, validation = _semantic_decision(
-                row, validations,
+                row, row_validations,
                 require_claim=require_claim_admission,
                 exact_identity_required=current_quality_first_split,
             )
@@ -4890,6 +4946,7 @@ def main() -> int:
     if (
         (not ns.allow_unpaired or ns.measure_all_runtime_successful)
         and not ns.screening_window_probe
+        and not native_dataset_inputs
     ):
         full_index: dict[
             tuple[str, str, str, str],
@@ -5171,7 +5228,7 @@ def main() -> int:
                 prepared = measurement_row.get(
                     "_prepair_energy_quality_admission"
                 )
-                if isinstance(prepared, Mapping):
+                if isinstance(prepared, Mapping) and prepared.get("admission_scope") != "native_dataset_energy":
                     measurement_row[
                         "_prepair_energy_quality_admission"
                     ] = _native_runtime_observation_admission(
@@ -6274,6 +6331,18 @@ def main() -> int:
             "measure_command": measure,
             "window_method_ab": dict(window_ab),
         })
+        if energy_quality_admission.get("admission_scope") == "native_dataset_energy":
+            own_eligible = energy_quality_admission["energy_claim_eligible"]
+            plan[-1].update(native_dataset_quality_FPS_source=row["native_dataset_quality_FPS_source"],
+                native_command_contract=dict(command_contract),
+                energy_observation_scope="standalone_native_dataset_quality",
+                full_baseline_comparison_released=False,
+                energy_claim_eligible=own_eligible, claim_eligible=own_eligible,
+                claim_ok=own_eligible, eligible_for_energy_results_import=None,
+                eligible_for_scientific_claim=own_eligible,
+                energy_evidence_tier="normal_own_observation", energy_tier="normal_own_observation",
+                semantic_gate="own_native_dataset_quality_observation",
+                scientific_claim_exclusion_reasons=([] if own_eligible else ["native_dataset_quality_" + energy_quality_admission.get("local_task_quality_decision", "not_pass")]))
         try:
             validate_energy_quality_admission_axes(
                 energy_quality_admission,
@@ -6738,6 +6807,8 @@ def main() -> int:
         "excluded_rows": excluded,
         "deduplicated_rows": deduplicated,
         "pairing_policy": (
+            "standalone_native_dataset_quality_no_full_comparison"
+            if native_dataset_inputs else
             "screening_probe_one_successful_native_target_no_pairing"
             if ns.screening_window_probe
             else "measurement_independent_quality_pairing_posthoc"
@@ -6767,6 +6838,7 @@ def main() -> int:
             if (
                 ns.screening_window_probe
                 or ns.measure_all_runtime_successful
+                or native_dataset_inputs
             )
             else not bool(ns.allow_unpaired)
         ),

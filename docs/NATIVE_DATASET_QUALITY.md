@@ -94,3 +94,27 @@ injected hardware, distinct image geometries, export/normal-loader integration,
 negative evidence/source/image cases, isolated cold-stage imports, immutable CPU
 reference reuse and controller capacity/lease cleanup. These tests are software
 evidence; actual hardware capture, statistics and adoption have separate receipts.
+
+## Native quality as authority for standalone energy
+
+The normal energy planner accepts repeatable `--native-dataset-quality
+NORMAL_COMPLETED_CASE.json` inputs for a standalone Native Split summary.
+These are the actual normal central caller's published case records. They must
+bind the new request, N5000 completed capture, canonical CPU reference, normal
+B1000 result, and published producer/consumer source freezes. The reader uses
+the existing Native request and completion validators under the explicitly
+published producer source scope; it performs no inference or statistics rerun.
+
+The selected timed FPS command, precision, artifacts and complete completion
+semantics must match. The prior Native seal remains artifact provenance; its
+old quality result and evaluation ID never stand in for the fresh observation.
+Missing, incomplete, changed or conflicting evidence fails closed. No legacy
+EvaluationRun manifest or Native stage is synthesized.
+
+The sealed `native_dataset_energy` admission represents normal own Native
+energy in mJ/image. It preserves the actual normal reporting decision, the legacy bootstrap
+decision and the accuracy assessment separately. It releases no VendorFull or
+TensorRTFull comparison: `claim_comparable` and
+`full_baseline_comparison_released` remain false. The execution reader checks
+the same published sources again before capture. Runtime, collector,
+calibration, repetition, duration, counting and drain policies are unchanged.

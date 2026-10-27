@@ -116,6 +116,7 @@ def validate_energy_quality_admission_axes(
     if admission_scope not in {
         "native_energy",
         "native_runtime_observation",
+        "native_dataset_energy",
         "window_method_validation_probe",
     }:
         raise ValueError(
@@ -131,6 +132,20 @@ def validate_energy_quality_admission_axes(
             raise ValueError(
                 f"energy_quality_admission_{field}_drift"
             )
+
+    if admission_scope == "native_dataset_energy":
+        # Own Native mJ/image is a normal observation, independently of a
+        # VendorFull/TensorRTFull comparison. The latter is never released here.
+        if (any(admission.get(field) is not True for field in REQUIRED_VERIFIED_AXES)
+                or admission["quality_claim_result_verified"] is not True
+                or admission["diagnostic_only"] is not False
+                or admission["claim_comparable"] is not False
+                or admission["screening_comparable"] is not False
+                or admission["energy_claim_eligible"] is not admission["accuracy_gate_pass"]
+                or admission.get("full_baseline_comparison_released") is not False
+                or not strict_sha256(admission.get("native_dataset_quality_authority_sha256"))):
+            raise ValueError("native_dataset_energy_own_observation_scope_invalid")
+        return
 
     if admission_scope == "window_method_validation_probe":
         if (
@@ -272,6 +287,9 @@ def verify_sealed_energy_quality_admission(
         admission,
         row=row,
     )
+    if (admission.get("admission_scope") == "native_dataset_energy"
+            and admission.get("native_dataset_quality_authority_sha256") != row.get("native_split_energy_quality_binding_sha256")):
+        raise ValueError("native_dataset_energy_quality_authority_seal_drift")
     return declared, "sealed_energy_quality_admission_verified"
 
 

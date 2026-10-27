@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2435,
+  "file_count": 2436,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 543028,
-      "sha256": "43fa8cb40eca739b8640cf5577117a11386416947a6ff9dc3c3042a15a9aab75"
+      "size": 544066,
+      "sha256": "667c73347524de8234a4819629388d43ad4bcbd57238ed45e7e96d0b91194f1c"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -411,8 +411,8 @@
     },
     {
       "path": "docs/NATIVE_DATASET_QUALITY.md",
-      "size": 6226,
-      "sha256": "0cd6bac0aaaef683cade2eb61729e4beba95ea27eda881cb4a1c5e470294f4b7"
+      "size": 7700,
+      "sha256": "55189a02e9c496cd313c05b07340e86f5acc9c214e39b5736662db411cf931a6"
     },
     {
       "path": "docs/NATIVE_HAILORT_TRT_FIFO_FASTPATH.md",
@@ -1406,8 +1406,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/native_energy_quality_admission.py",
-      "size": 10074,
-      "sha256": "ce7e64baadea9c5a2c335c70470fd7ad4bbb403ad8f513ef2c9817c74f91ba1f"
+      "size": 11314,
+      "sha256": "dbbca2790d1a15cf7403228574e2ecb40b92ff2ef8b67706d9423fdff144e817"
     },
     {
       "path": "onnx_splitpoint_tool/native_energy_reporting.py",
@@ -1476,8 +1476,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/native_split_quality_authority.py",
-      "size": 16642,
-      "sha256": "3b6ddb5723731ca680a38fa63810686e50b19bd7d464312370cf1cfd85d835fc"
+      "size": 35625,
+      "sha256": "774ef3bdba6900f99283d852a5d6bc6db799d9ba9f92e7f7e15ca1e533d62e62"
     },
     {
       "path": "onnx_splitpoint_tool/native_three_stage.py",
@@ -1996,8 +1996,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/remote_scripts/native_producer_energy_plan.py",
-      "size": 299933,
-      "sha256": "982ef5b5e92df176aab519e53bfe1ae56265a8ffa0970f77ed4837fbf33abbcf"
+      "size": 305588,
+      "sha256": "c344467fd90256283c7851019b672e99339c3d7f726111cab4bcc9e40de289f1"
     },
     {
       "path": "onnx_splitpoint_tool/resources/remote_scripts/native_producer_final_report.py",
@@ -2056,8 +2056,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/remote_scripts/run_native_producer_energy_from_summary.py",
-      "size": 237044,
-      "sha256": "54898ac5e2646f3b922cf11d9d5df68c64f33cd0249ade2e3b85fbd54f0ea516"
+      "size": 237572,
+      "sha256": "8145ff0d294dafb6f9d8e077ae1b1b586c82e6e2df60b7578fb5be1b89f013a6"
     },
     {
       "path": "onnx_splitpoint_tool/resources/remote_scripts/run_window_method_validation_probe.py",
@@ -4206,8 +4206,8 @@
     },
     {
       "path": "scripts/native_producer_energy_plan.py",
-      "size": 299933,
-      "sha256": "982ef5b5e92df176aab519e53bfe1ae56265a8ffa0970f77ed4837fbf33abbcf"
+      "size": 305588,
+      "sha256": "c344467fd90256283c7851019b672e99339c3d7f726111cab4bcc9e40de289f1"
     },
     {
       "path": "scripts/native_producer_final_report.py",
@@ -4731,8 +4731,8 @@
     },
     {
       "path": "scripts/run_native_producer_energy_from_summary.py",
-      "size": 237044,
-      "sha256": "54898ac5e2646f3b922cf11d9d5df68c64f33cd0249ade2e3b85fbd54f0ea516"
+      "size": 237572,
+      "sha256": "8145ff0d294dafb6f9d8e077ae1b1b586c82e6e2df60b7578fb5be1b89f013a6"
     },
     {
       "path": "scripts/run_reference_workflow_v2804.sh",
@@ -7953,6 +7953,11 @@
       "path": "tests/test_native_concurrent_runtime_sync.py",
       "size": 2589,
       "sha256": "1354d2d9f9d4e87e369a6df263b0a67b17e56454a01b17f7b7e45793cd698ebe"
+    },
+    {
+      "path": "tests/test_native_dataset_energy_authority.py",
+      "size": 12433,
+      "sha256": "273c569d0fc2c20f2104ad1b2269da5c0ae9dd9cff07eb6be30ff7348f25bac1"
     },
     {
       "path": "tests/test_native_dataset_quality_capture.py",

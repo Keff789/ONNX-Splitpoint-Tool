@@ -4826,3 +4826,21 @@ Kaltimport der exakten Remotequellen und negative Eingabe-/Belegfälle. Reale
 N5000-Aufnahme und anschließende zentrale Auswertung sind eigene Laufbelege;
 dieser Softwarestand erklärt keinen Hardware- oder Gesamtworkflow-PASS.
 Details: [NATIVE_DATASET_QUALITY.md](NATIVE_DATASET_QUALITY.md).
+
+
+## 2026-10-27 — Native-Dataset-Qualität als eigene Energieautorität
+
+Der normale Energieplaner kann explizit die veröffentlichten
+`NORMAL_COMPLETED_CASE.json`-Belege einer abgeschlossenen Native-N5000-Aufnahme
+und der normalen zentralen B1000-Auswertung verwenden. Request-, Producer-,
+Completion- und veröffentlichte Quellenprüfungen bleiben verpflichtend.
+FPS-Identität, versiegelter Befehl, Artefakte und Completionsemantik müssen
+übereinstimmen; alte Qualitätswerte, EvaluationRun-Manifeste oder Native-Stages
+werden nicht als neue Belege nachgebildet.
+
+Der versiegelte Scope `native_dataset_energy` beschreibt eine normale eigene
+Native-Energiebeobachtung mit tatsächlicher lokaler Qualitätsentscheidung.
+Er gibt keine VendorFull-/TensorRTFull-Vergleichsautorität frei. Der normale
+Executor kontrolliert die Quellen vor der Messung erneut. Inferenz, FPS- und
+Energie-Hotloop, Collector, Kalibrierung, Dauer, Wiederholungen, Zähler und
+Drain bleiben unverändert. Softwaretests und reale Messbelege bleiben getrennt.
