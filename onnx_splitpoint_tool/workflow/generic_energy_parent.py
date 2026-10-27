@@ -98,6 +98,31 @@ def controller_sources():
 
 
 def select_case(plan_path, setup, case_id):
+    plan_path = Path(plan_path).resolve(strict=True)
+    plan = read(plan_path)
+    if plan.get('scope_mode') == 'generic_only_completed_task':
+        if (R is None or plan.get('admission_mode') != 'generic_only'
+                or any(plan.get(key) is not False for key in
+                       ('build_allowed', 'fallback_allowed', 'automatic_retry'))):
+            raise ValueError('Generic-only energy requires its unchanged no-build source plan')
+        # Reuse a completed normal cohort. Source-model copies may have been
+        # archived after admission; the energy preflight checks every actual
+        # runtime/input/source byte, while performance_admission revalidates
+        # the original three processes and exact saved normal admission.
+        bound_file({'path': plan['scope_source'], 'sha256': plan['scope_source_sha256']})
+        rows = plan['rows']
+        selected = [row for row in rows if row['setup_id'] == setup
+                    and case_id in (row['case_id'], row.get('case_key'))]
+        if len(selected) != 1 or setup not in SETUPS:
+            raise ValueError('Exactly one admitted Generic-only energy case is required')
+        row = selected[0]
+        if (row['identity'] != row['runtime_config']['identity']
+                or any(row['runtime_config'].get(key) is not False for key in
+                       ('build_allowed', 'fallback_allowed', 'automatic_retry'))
+                or not Path(row['result_path']).resolve().is_relative_to(
+                    Path(plan['output_root']).resolve() / 'results')):
+            raise ValueError('Generic-only energy source identity or result location differs')
+        return plan, row
     configure(plan_path=plan_path)
     plan_path = Path(plan_path).resolve(strict=True)
     followup = plan_path not in (DEFAULT_PLAN, FINAL_PLAN)
@@ -251,6 +276,22 @@ def performance_admission(row, *, plan=None):
     projection = validate_completion_case(raw, row, result_root=result.parent)
     if projection.get('status') != 'completed' or projection.get('valid_repetition_count') != 3:
         raise ValueError('Three current, independently validated performance processes required')
+    if row.get('admission_mode') == 'generic_only':
+        from onnx_splitpoint_tool.generic_only_reporting import generic_only_admission
+        if plan is None or plan.get('scope_mode') != 'generic_only_completed_task':
+            raise ValueError('Generic-only energy requires its original normal source plan')
+        admitted = generic_only_admission(projection, row, cell_control=plan['cell_execution_control'])
+        report_path = Path(plan['output_root']) / 'reports/generic_only_admissions.json'
+        matches = [item for item in read(report_path).get('rows', [])
+                   if item.get('case_key') == row['case_key']]
+        if (admitted.get('eligible_for_generic_only_execution') is not True
+                or matches != [admitted]):
+            raise ValueError('Generic-only normal performance admission missing or changed')
+        return {'performance_result': file_binding(result), 'valid_repetitions': 3,
+                'admission_mode': 'generic_only', 'existing_performance_reused': True,
+                'normal_generic_only_admission': admitted,
+                'normal_generic_only_report': file_binding(report_path),
+                'native_performance_claimed': False}
     final = plan is not None and bool(plan.get('final_source_freeze'))
     followup = final and bool(plan.get('followup_scope'))
     if followup:
@@ -402,7 +443,7 @@ def verify_calls(plan, prefix):
 
 
 def prepare(args):
-    configure(plan_path=args.plan)
+    configure(args.run_dir)
     from onnx_splitpoint_tool.workflow.generic_completed_task import prepare_energy_case, check_energy_campaign
     plan, row = select_case(args.plan, args.setup, args.case)
     admission = performance_admission(row, plan=plan) # Before any output tree, staging, or budget write.
@@ -689,12 +730,14 @@ def worker(run,attempt_dir=None):
                 write(attempt/'worker-plan.json',file_binding(plan_path))
         admission=parent['performance_admission']
         result=run_energy_case(plan_path,case,transport,
-            performance_admission=admission if admission.get('normal_pair_report') else None)
+            performance_admission=admission if (admission.get('normal_pair_report')
+                or admission.get('admission_mode') == 'generic_only') else None)
         write(attempt/'normal_result.json',result)
         if (result.get('normal_report_verified') is not True
                 or (result.get('energy_efficiency_claim_eligible') is not True
                     and parent['performance_plan']['path'] != str(FINAL_PLAN)
-                    and parent.get('performance_admission',{}).get('followup_plan') != parent['performance_plan'])):
+                    and parent.get('performance_admission',{}).get('followup_plan') != parent['performance_plan']
+                    and case.get('admission_mode') != 'generic_only')):
             raise RuntimeError('Normal Generic energy final admission failed')
         return result
     finally:
@@ -810,7 +853,8 @@ def _run_prepared_once(args):
         if resuming:
             attempt=run/'resume_attempts'/uuid.uuid4().hex;attempt.mkdir(parents=True,exist_ok=False)
             if latest_clean_attempt(run)!=previous:raise ValueError('Generic predecessor changed before acquired parent lock')
-        observe_owners({case['setup_id']:parent['target']},attempt/'owner_preflight')
+        observe_owners({case['setup_id']:parent['target']},attempt/'owner_preflight',
+                       case.get('admission_mode') == 'generic_only')
         journal=leases.configure_journal(scope=RemoteProcessLeaseScope(run.name,session),journal_dir=attempt/'remote-process-leases')
         broker=ControllerResourceBroker(journal,ResourcePauseGate(),run_dir=run,setups={case['setup_id']:parent['resources']})
         env={**os.environ,**leases.journal_environment(),'ONNX_SPLITPOINT_CONTROLLER_RESOURCES':'required','PYTHONDONTWRITEBYTECODE':'1'}
@@ -844,7 +888,8 @@ def _run_prepared_once(args):
         if (final.get('normal_report_verified') is not True
                 or (final.get('energy_efficiency_claim_eligible') is not True
                     and parent['performance_plan']['path'] != str(FINAL_PLAN)
-                    and parent.get('performance_admission',{}).get('followup_plan') != parent['performance_plan'])):
+                    and parent.get('performance_admission',{}).get('followup_plan') != parent['performance_plan']
+                    and case.get('admission_mode') != 'generic_only')):
             raise RuntimeError('Normal Generic energy final admission absent')
     except BaseException as exc:
         primary=exc

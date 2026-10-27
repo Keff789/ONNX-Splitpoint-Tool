@@ -1,3 +1,18 @@
+## 27.10.2026 — Energie für bereits zugelassene Generic-only-Messungen
+
+Der bestehende Generic-Energieparent kann einen ursprünglichen Generic-only-Plan
+und dessen drei abgeschlossene FPS-Prozesse wiederverwenden. Er prüft den exakten
+gespeicherten normalen Generic-only-Zulassungsreport. Archivierte lokale
+Quellmodellkopien erzwingen weder einen Build noch eine neue FPS-Messung; der
+unveränderte normale Energiepreflight prüft die tatsächlich verwendeten
+Remote-Artefakte, Eingaben und Quellen. Das Ergebnis hält die eigenständige
+Generic-Zulassung und deren Qualityentscheidung fest und erzeugt kein Nativepaar.
+Der vorhandene ressourcenbezogene Ownercheck gilt nur für diesen bereits
+getrennten Modus. Collector, Kalibrierung, drei Wiederholungen, 60 Sekunden
+Taskannahme, Drain, tatsächlicher Completedcount und wissenschaftliche Gates
+bleiben unverändert. Softwaretests und tatsächliche Hardwaremessung werden im
+zugehörigen Paketbericht getrennt ausgewiesen.
+
 ## 23.10.2026 — Kanonische Backendidentität im DeepX-Controllerdescriptor
 
 Der normale Controller-Writer ergänzt im vorhandenen DeepX-Stage-Descriptor

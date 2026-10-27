@@ -1,5 +1,13 @@
 # Command-window versus historical flank-window validation
 
+The existing Generic completed-task energy parent also accepts a previously
+completed Generic-only source plan through its saved normal standalone admission.
+It reuses the exact three-process FPS evidence and checks actual runtime sources,
+artifacts, inputs and environment in the existing energy preflight. Its report
+retains standalone quality admission and makes no Native performance-pair claim.
+The calibrated command-window method, three 60-second admissions with lossless
+drain, actual completed-task denominator and all collector gates stay unchanged.
+
 The Chapter-4 calibration work and the new Final command-window protocol solve
 different parts of the measurement problem.  The existing electrical
 calibration equations, environment correction and `power_calculations`

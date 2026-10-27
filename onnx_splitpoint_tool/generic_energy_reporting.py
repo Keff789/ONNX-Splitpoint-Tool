@@ -204,6 +204,24 @@ def _admitted_performance_pair(plan, case, admission):
     return selected[0]
 
 
+def _admitted_generic_only_performance(plan, case, projection, admission):
+    """Retain normal standalone admission, without manufacturing a Native pair."""
+    from .generic_only_reporting import generic_only_admission
+    own = generic_only_admission(projection, case)
+    admission = admission or {}
+    binding = admission.get('normal_generic_only_report') or {}
+    report = json.loads(_source(binding.get('path', ''), binding.get('sha256')))
+    selected = [item for item in report.get('rows', []) if item.get('case_key') == case['case_key']]
+    if (admission.get('admission_mode') != 'generic_only'
+            or admission.get('performance_result') != {'path': plan['performance_result'], 'sha256': plan['performance_result_sha256']}
+            or admission.get('valid_repetitions') != 3
+            or own.get('eligible_for_generic_only_execution') is not True
+            or selected != [own] or admission.get('normal_generic_only_admission') != own
+            or admission.get('native_performance_claimed') is not False):
+        raise ValueError('Generic-only energy normal source admission missing or changed')
+    return own
+
+
 def collect_generic_energy_case(plan, descriptors, case, *, performance_admission=None):
     """Admit three fresh captures and retain normal Generic quality gates."""
     if _acceptance_repetitions(plan) == 1:
@@ -245,9 +263,17 @@ def collect_generic_energy_case(plan, descriptors, case, *, performance_admissio
     statistics = {field: _repeat_statistics([r[field] for r in observations], .95) for field in
                   ('energy_j', 'energy_per_completed_task_j', 'completed_tasks_per_j', 'active_duration_s')}
     projection = validate_completion_case(performance, case, result_root=performance_path.parent)
-    pair = (completion_pair(projection, case) if performance_admission is None else
-            _admitted_performance_pair(plan, case, performance_admission))
-    claim = pair.get('eligible_for_claim_transfer') is True and all(r['primary_energy_claim_gate'] for r in observations)
+    generic_only = config.get('admission_mode') == 'generic_only'
+    own_admission = None
+    if generic_only:
+        own_admission = _admitted_generic_only_performance(plan, case, projection, performance_admission)
+        pair = None
+        quality_admitted = own_admission['quality_eligible']
+    else:
+        pair = (completion_pair(projection, case) if performance_admission is None else
+                _admitted_performance_pair(plan, case, performance_admission))
+        quality_admitted = pair.get('eligible_for_claim_transfer') is True
+    claim = quality_admitted and all(r['primary_energy_claim_gate'] for r in observations)
     return {'schema': 'onnx-splitpoint/generic-completed-task-energy-observation/v1',
         'identity': config['identity'], 'status': 'completed', 'valid_repetitions': 3,
         'performance_result_sha256': plan['performance_result_sha256'],
@@ -257,7 +283,10 @@ def collect_generic_energy_case(plan, descriptors, case, *, performance_admissio
         'completed_tasks_per_j': statistics['completed_tasks_per_j']['mean'],
         'inverse_mean_energy_per_completed_task_j': 1 / statistics['energy_per_completed_task_j']['mean'],
         'normal_report_verified': True, 'energy_efficiency_claim_eligible': claim,
-        'normal_generic_performance_pair': pair, 'scientific_primary_method': 'command_marker_window',
+        'normal_generic_performance_pair': pair,
+        **({'admission_mode': 'generic_only', 'normal_generic_only_admission': own_admission,
+            'native_performance_claimed': False} if generic_only else {}),
+        'scientific_primary_method': 'command_marker_window',
         'raw_source_records_modified': False, 'raw_run_indices': [r['raw_run_index'] for r in observations]}
 
 

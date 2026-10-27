@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2370,
+  "file_count": 2371,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 454349,
-      "sha256": "d6150e3c810f6fd7364cd6cc2b318344625e1d0ef6a7add417a665312ae43d55"
+      "size": 455332,
+      "sha256": "7edbf7081c037ac9d73e0084b5ae8f273ddbe97c9e05f7f6af1d3e98a2c851fb"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -376,8 +376,8 @@
     },
     {
       "path": "docs/ENERGY_WINDOW_METHOD_VALIDATION.md",
-      "size": 5496,
-      "sha256": "f0944087fb8571ef6e568fa4351b674b6d1bcafd1304b146cadb15580f6d2224"
+      "size": 6057,
+      "sha256": "e59e730b68e20e78b823f0178cd9e9f4a0388e69bfd5760f48bbabd4c2e2bfbf"
     },
     {
       "path": "docs/EVALUATION_PROFILES.md",
@@ -986,8 +986,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_energy_reporting.py",
-      "size": 22305,
-      "sha256": "b454d30c155e88950e27e6bd3f0ed83f6f04bb1711af227a6469749d5b879a0a"
+      "size": 23988,
+      "sha256": "6bb894aa8255aab5a156b930dbe2f3d21545606c1edb36d69f6ae5725c12d327"
     },
     {
       "path": "onnx_splitpoint_tool/generic_only_classification_quality.py",
@@ -3141,8 +3141,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
-      "size": 82347,
-      "sha256": "d2a12a53dd652e218c9246f9071f3223f2a261b11020740e7cd016c5b1637c3a"
+      "size": 85505,
+      "sha256": "5e923703d9e87287d3c1ac7b762f31b7100ab2603984f2d9da6f1b1574a0b7c3"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_only_cell_policy.py",
@@ -7473,6 +7473,11 @@
       "path": "tests/test_generic_only_classification_quality.py",
       "size": 15638,
       "sha256": "fa654ac8ebe93443facd96b9cc03e487d041eeff36c12ebd923cdd3692265fbe"
+    },
+    {
+      "path": "tests/test_generic_only_energy_admission.py",
+      "size": 4453,
+      "sha256": "bd9395ba0e358dd1af993ba217c8d8a6b6c6143063b23f4e1d6bf115126f473e"
     },
     {
       "path": "tests/test_generic_only_generated.py",
