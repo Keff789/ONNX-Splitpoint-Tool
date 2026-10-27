@@ -1,5 +1,25 @@
 ## 27.10.2026 — Energie für bereits zugelassene Generic-only-Messungen
 
+Der erste reale Vorlauf stoppte vor Collector und Workload, weil der historische
+Energieprüfer Tensorverträge als Dateideskriptoren las. Weitere unveränderte
+Generic-only-Gates waren ausdrücklich auf FPS und 1100 Abschlüsse beschränkt.
+Der normale Energieaufruf verwendet deshalb eine separat gebundene Kopie des
+ursprünglichen Codebundles. Zwei Validatormodule erhalten ausschließlich die
+benannten Energie-/Serialprüfungen; im erzeugten Runner ändert sich genau der
+Postflight-Aufruf mit dem tatsächlich gemessenen Completedcount. Alle übrigen
+Codebytes und die eigentlichen P1-/Transfer-/P2-/Completion-/Async-/Timer-/Drain-
+Implementierungen bleiben erhalten. Die ursprünglichen Remotequellen werden
+nicht überschrieben. Die Source-/Importrelation prüft jeden ursprünglichen und
+kopierten Member sowie die exakten zugelassenen Änderungen.
+
+Die bereits abgeschlossenen normalen MixedControls werden hashgebunden außerhalb
+der Energieaufnahme wiederverwendet. Es läuft kein neuer MixedControl im
+Energiefenster. Standard-FPS bleibt bei 100 Warmups und 1000 Tasks streng.
+Der Energieimport prüft den tatsächlichen Dauerlaufcount einschließlich Drain,
+Attestierung und gespeicherter serieller Vergleichsdaten. Controller-Aliasse
+sind nur für dieselbe Evidenzrolle, denselben Remotepfad und denselben SHA erlaubt;
+der DUT-Vorlauf verlangt immer die tatsächlich gestagten Dateien.
+
 Der bestehende Generic-Energieparent kann einen ursprünglichen Generic-only-Plan
 und dessen drei abgeschlossene FPS-Prozesse wiederverwenden. Er prüft den exakten
 gespeicherten normalen Generic-only-Zulassungsreport. Archivierte lokale

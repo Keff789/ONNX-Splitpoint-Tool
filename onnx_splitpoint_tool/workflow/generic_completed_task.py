@@ -1824,13 +1824,84 @@ def _restore_energy_execution_environment(command: str, execution_identity: dict
     return shlex.join(argv)
 
 
+def _prepare_generic_only_energy_sources(row, config, performance_result, output, remote_base,
+                                         original_bundle, admission):
+    """Clone the existing code seal; change only declared untimed energy guards."""
+    import hashlib
+    import io
+    import tarfile
+    import shutil
+    from ..generic_energy_reporting import (ENERGY_VALIDATOR_FUNCTIONS,
+        ENERGY_OLD_COUNT_CALL, ENERGY_NEW_COUNT_CALL)
+    from ..runners.generic_energy import file_hash
+    if (admission or {}).get('admission_mode') != 'generic_only':
+        raise ValueError('Generic-only energy requires its completed normal source admission')
+    original_bundle = Path(original_bundle).resolve(strict=True)
+    old_sources = list(config['runtime_source_files'])
+    runners = [item for item in old_sources if item['path'].endswith('/runner/run_split_onnxruntime.py')]
+    if len(runners) != 1:
+        raise ValueError('Unique original FPS runner required')
+    old_root = str(PurePosixPath(runners[0]['path']).parent.parent)
+    new_root = remote_base + '/runtime'
+    source_map = {item['path']: item['sha256'] for item in old_sources}
+    names = sorted(path[len(old_root) + 1:] for path in source_map
+                   if path.startswith(old_root + '/runner/') or path.startswith(old_root + '/splitpoint_runners/'))
+    bundle = output / 'energy-runtime-bundle.tar.gz'
+    additions = []
+    with tarfile.open(original_bundle) as before, tarfile.open(bundle, 'w:gz') as after:
+        for name in names:
+            member = before.getmember(name)
+            if not member.isfile() or Path(name).is_absolute() or '..' in Path(name).parts:
+                raise ValueError('Original energy source bundle member differs')
+            raw = before.extractfile(member).read()
+            if hashlib.sha256(raw).hexdigest() != source_map[old_root + '/' + name]:
+                raise ValueError('Original bundle is not the actual FPS source closure')
+            if name in ENERGY_VALIDATOR_FUNCTIONS:
+                raw = (Path(__file__).resolve().parents[1] / 'runners' / Path(name).name).read_bytes()
+            elif name == 'runner/run_split_onnxruntime.py':
+                text = raw.decode()
+                if text.count(ENERGY_OLD_COUNT_CALL) != 1:
+                    raise ValueError('Original runner lacks the exact audited postflight call')
+                raw = text.replace(ENERGY_OLD_COUNT_CALL, ENERGY_NEW_COUNT_CALL, 1).encode()
+            info = tarfile.TarInfo(name); info.size = len(raw); info.mode = 0o644
+            after.addfile(info, io.BytesIO(raw))
+            additions.append({'path': new_root + '/' + name, 'sha256': hashlib.sha256(raw).hexdigest()})
+    evidence = []
+    for role, source in [('performance_result', performance_result),
+                         ('normal_admission_report', admission['normal_generic_only_report']['path'])]:
+        source = Path(source)
+        target = output / (role + '.json'); shutil.copyfile(source, target)
+        descriptor = {'path': str(target), 'sha256': file_hash(target)}
+        if role == 'normal_admission_report' and descriptor['sha256'] != admission['normal_generic_only_report']['sha256']:
+            raise ValueError('Generic-only normal admission changed during preparation')
+        remote = remote_base + '/evidence/' + target.name
+        evidence.append({'role': role, 'local': descriptor, 'runtime_path': remote})
+        additions.append({'path': remote, 'sha256': descriptor['sha256']})
+    binding = {'schema': 'onnx-splitpoint/generic-only-energy-verifier-binding/v1',
+        'original_bundle': {'path': str(original_bundle), 'sha256': file_hash(original_bundle)},
+        'energy_bundle': {'path': str(bundle), 'sha256': file_hash(bundle)},
+        'original_runtime_root': old_root, 'energy_runtime_root': new_root,
+        'original_source_files': old_sources, 'changed_functions': ENERGY_VALIDATOR_FUNCTIONS,
+        'runner_delta': 'exact_postflight_actual_completed_count_call', 'evidence': evidence}
+    reused = {'schema': 'onnx-splitpoint/generic-only-energy-control-reuse/v1',
+        'original_mixed_input_control': config['mixed_input_control'],
+        'normal_admission': admission['normal_generic_only_admission']}
+    for item in evidence:
+        reused[item['role']] = {'path': item['runtime_path'], 'sha256': item['local']['sha256']}
+    config['mixed_input_control'] = False
+    config['runtime_source_files'] = sorted([*old_sources, *additions], key=lambda item: item['path'])
+    return binding, reused
+
+
 def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
                         collector_python: str, collector_script: Path,
                         hardware_setups_file: Path, remote_command_prefix: list[str],
                         campaign_budget_file: Path,
                         duration_s: float = 60.0,
                         require_environment_observation: bool = False,
-                        environment_run_id: str | None = None) -> dict:
+                        environment_run_id: str | None = None,
+                        original_runtime_bundle: Path | None = None,
+                        energy_performance_admission: dict | None = None) -> dict:
     """Prepare ordinary collector commands; perform no device or sensor action.
 
     The caller supplies the existing resource-owned remote command prefix.
@@ -1874,22 +1945,36 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
     runner_paths = [r['path'] for r in sources if r['path'].endswith('/runner/run_split_onnxruntime.py')]
     if len(runner_paths) != 1:
         raise ValueError('Unique bound Generic runner required')
-    contract = build_contract(config, source_files=sources, runner_path=runner_paths[0],
-                              completion_runtime_mode=next(iter(modes)), duration_s=duration_s,
-                              execution_identity=execution_identity)
-    config['energy_capture'] = {'contract': contract, 'performance_result_sha256': file_hash(performance_result)}
     output = outside_primary(output, Path(row['original_run']))
     output.mkdir(parents=True, exist_ok=False)
-    config_path = output / 'generic_energy_config.json'; write_json(config_path, config)
     capture_id = uuid.uuid4().hex
     remote_root = str(PurePosixPath(runner_paths[0]).parent.parent)
     remote_base = remote_root + '/energy/' + case_name(row) + '/' + capture_id
+    binding = reused_control = None
+    active_runner = runner_paths[0]
+    if config.get('admission_mode') == 'generic_only':
+        if original_runtime_bundle is None:
+            raise ValueError('Generic-only energy requires its original sealed runtime bundle')
+        binding, reused_control = _prepare_generic_only_energy_sources(row, config, performance_result,
+            output, remote_base, original_runtime_bundle, energy_performance_admission)
+        remote_root = binding['energy_runtime_root']
+        active_runner = remote_root + '/runner/run_split_onnxruntime.py'
+        sources = config['runtime_source_files']
+    contract = build_contract(config, source_files=sources, runner_path=active_runner,
+                              completion_runtime_mode=next(iter(modes)), duration_s=duration_s,
+                              execution_identity=execution_identity)
+    config['energy_capture'] = {'contract': contract, 'performance_result_sha256': file_hash(performance_result)}
+    if binding:
+        config['energy_capture'].update(verifier_binding=binding, generic_only_control_reuse=reused_control)
+        from ..generic_energy_reporting import verified_energy_performance_sources
+        verified_energy_performance_sources(config, row['runtime_config'])
+    config_path = output / 'generic_energy_config.json'; write_json(config_path, config)
     remote_config = remote_base + '/generic_energy_config.json'
     runtime_attestation = remote_base + '/preflight_' + NONCE_TOKEN + '.json'
     calls = []
     for repetition in range(1, requested_repetitions + 1):
         remote_output = remote_base + f'/repetition_{repetition}/' + NONCE_TOKEN
-        workload = [row['remote_python_executable'], '-B', '-u', runner_paths[0],
+        workload = [row['remote_python_executable'], '-B', '-u', active_runner,
             '--generic-completion-config', remote_config, '--generic-completion-repetition', str(repetition),
             '--generic-completion-energy', '--energy-preflight-nonce', NONCE_TOKEN,
             '--energy-preflight-attestation', ATTESTATION_TOKEN,
@@ -1937,6 +2022,11 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
         'collector_script': str(collector_script), 'collector_script_sha256': file_hash(collector_script),
         'hardware_setups_file': str(hardware_setups_file), 'hardware_setups_file_sha256': file_hash(hardware_setups_file),
         'resource_ownership': 'normal_capture_controller_and_DUT_lease_required', 'hardware_executed': False}
+    if binding:
+        plan['energy_runtime_bundle'] = {'path': binding['energy_bundle']['path'],
+            'sha256': binding['energy_bundle']['sha256'], 'remote_path': remote_base + '/energy-runtime-bundle.tar.gz',
+            'runtime_root': binding['energy_runtime_root']}
+        plan['energy_evidence_sources'] = binding['evidence']
     write_json(output / 'generic_energy_plan.json', plan)
     return plan
 
@@ -2007,6 +2097,19 @@ def stage_energy_case(plan: dict, transport: SSHTransport) -> dict:
     config_path = Path(plan['config_path'])
     if file_hash(config_path) != plan['config_sha256']:
         raise ValueError('Generic energy staged configuration changed')
+    bundle = plan.get('energy_runtime_bundle')
+    if bundle:
+        from ..generic_energy_reporting import verified_energy_performance_sources
+        binding = plan['config']['energy_capture']['verifier_binding']
+        original = dict(plan['config'], runtime_source_files=binding['original_source_files'])
+        verified_energy_performance_sources(plan['config'], original)
+        if file_hash(bundle['path']) != bundle['sha256']:
+            raise ValueError('Generic energy runtime bundle changed')
+        upload_new_file(transport, Path(bundle['path']), bundle['remote_path'], expected_sha=bundle['sha256'])
+        checked_remote('mkdir -p -- ' + shlex.quote(bundle['runtime_root']) + ' && tar -xzf '
+                       + shlex.quote(bundle['remote_path']) + ' -C ' + shlex.quote(bundle['runtime_root']), transport)
+        for item in plan['energy_evidence_sources']:
+            upload_new_file(transport, Path(item['local']['path']), item['runtime_path'], expected_sha=item['local']['sha256'])
     return upload_new_file(transport, config_path, plan['remote_config_path'], expected_sha=plan['config_sha256'])
 
 

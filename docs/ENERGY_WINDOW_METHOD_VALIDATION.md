@@ -8,6 +8,16 @@ retains standalone quality admission and makes no Native performance-pair claim.
 The calibrated command-window method, three 60-second admissions with lossless
 drain, actual completed-task denominator and all collector gates stay unchanged.
 
+For a historical Generic-only source that predates energy admission, preparation
+copies its original source-only bundle into a new energy directory. Its binding
+checks every original source, copied code member, the explicitly listed untimed
+validation functions, and the single postflight call receiving the actual count.
+The original remote source remains intact. Completed normal mixed-input controls
+are retained as exact source evidence; they are not executed inside energy.
+Both validator source files, the original FPS result and normal admission report
+remain part of the energy seal. This does not create a Native comparison or
+replace the original FPS/quality observation.
+
 The Chapter-4 calibration work and the new Final command-window protocol solve
 different parts of the measurement problem.  The existing electrical
 calibration equations, environment correction and `power_calculations`

@@ -15465,7 +15465,8 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
                 completed_result.setdefault("host_nms_applied",
                     config["completion_contract"].get("completion_mode") != "decoded_nms_attested_materialization_no_second_nms")
             if generic_only:
-                compare_serial_reference(latest_outputs, completed_result, reference_outputs, serial_reference)
+                compare_serial_reference(latest_outputs, completed_result, reference_outputs, serial_reference,
+                    completed_count=measured["completed_work_units"] if energy else 1100)
             completed_path = sample_dir / "completed_task.json"
             _write_json(completed_path, completed_result)
             attempt.update(raw_output_samples=samples, output_sample_relation="last_measured_completed_task",

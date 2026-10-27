@@ -180,7 +180,7 @@ def prepared_case(tmp_path, backend):
     return config, output, np.load(inputs[0]["prepared_input"]["path"], allow_pickle=False)
 
 
-def execute(monkeypatch, tmp_path, backend, processor_mode):
+def execute(monkeypatch, tmp_path, backend, processor_mode, *, configure_energy=None):
     module = _module(monkeypatch)
     monkeypatch.setitem(sys.modules, "splitpoint_runners.generic_energy", generic_energy)
     actual_factory = detection.create_detection_completion_runtime
@@ -193,6 +193,8 @@ def execute(monkeypatch, tmp_path, backend, processor_mode):
 
     monkeypatch.setattr(detection, "create_detection_completion_runtime", factory)
     config, output, baseline = prepared_case(tmp_path, backend)
+    if configure_energy is not None:
+        configure_energy(config, output)
     events = []
     calls = {"transfer": 0, "stage2": 0}
     session = HailoSession() if backend == "hailo" else DeepXSession()
@@ -230,7 +232,8 @@ def execute(monkeypatch, tmp_path, backend, processor_mode):
         events.append(("mixed_end", time.perf_counter_ns()))
         return proof
 
-    args = {"clone_payload": None, "repetition_index": 1, "stage1_async": adapter, "mixed_control": mixed}
+    args = {"clone_payload": None, "repetition_index": 1, "stage1_async": adapter,
+            "mixed_control": mixed if config.get('mixed_input_control') else None}
     runtime_artifacts = {role: item["path"] for role, item in config["expected_runtime_artifacts"].items()}
     try:
         status = module._run_generic_split_completion(config, output, stage1, transfer, stage2, runtime_artifacts, **args)
@@ -244,7 +247,8 @@ def execute(monkeypatch, tmp_path, backend, processor_mode):
                 "processor_mode": processor_mode, "different_completion_fields": differences}, indent=2))
         raise
     assert status == 0
-    result = json.loads((output / "generic_completion_results.json").read_text())
+    result = json.loads((output / ("generic_energy_results.json" if config.get('energy_capture')
+                                  else "generic_completion_results.json")).read_text())
     return SimpleNamespace(module=module, config=config, output=output, events=events, adapter=adapter,
         session=session, processors=processors, result=result, callbacks=(stage1, transfer, stage2),
         runtime_artifacts=runtime_artifacts, kwargs=args, calls=calls)

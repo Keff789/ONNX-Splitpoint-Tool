@@ -472,7 +472,9 @@ def prepare(args):
         collector_python=sys.executable, collector_script=W/'scripts/energy_measurement_cli.py',
         hardware_setups_file=registry_snapshot, remote_command_prefix=prefix,
         campaign_budget_file=BUDGET, duration_s=60.,
-        require_environment_observation=True, environment_run_id=run.name)
+        require_environment_observation=True, environment_run_id=run.name,
+        **({'original_runtime_bundle': Path(plan['output_root'])/'runner-bundle.tar.gz',
+            'energy_performance_admission': admission} if row.get('admission_mode') == 'generic_only' else {}))
     verify_calls(normal,prefix)
     parent = {'schema':'revision3/generic-energy-parent/v1','prepared_at':now(),'run_dir':str(run),
         'performance_plan':file_binding(args.plan),'case':file_binding(case_path),

@@ -222,6 +222,84 @@ def _admitted_generic_only_performance(plan, case, projection, admission):
     return own
 
 
+ENERGY_VALIDATOR_FUNCTIONS = {
+    'splitpoint_runners/generic_energy.py': ['validate_config', 'validate_energy_result'],
+    'splitpoint_runners/generic_only.py': ['validate_generic_only_config', 'compare_serial_reference', 'validate_serial_reference'],
+}
+ENERGY_OLD_COUNT_CALL = ('                compare_serial_reference(latest_outputs, completed_result, reference_outputs, serial_reference)\n')
+ENERGY_NEW_COUNT_CALL = ('                compare_serial_reference(latest_outputs, completed_result, reference_outputs, serial_reference,\n'
+                         '                    completed_count=measured["completed_work_units"] if energy else 1100)\n')
+
+
+def verified_energy_performance_sources(config, performance_config):
+    """Check a finite energy-only source clone against every original FPS seal."""
+    import ast
+    import hashlib
+    import io
+    import tarfile
+    original = performance_config.get('runtime_source_files') or []
+    binding = (config.get('energy_capture') or {}).get('verifier_binding')
+    if not binding:
+        if config.get('runtime_source_files') != original:
+            raise ValueError('Generic energy source closure differs without a verifier binding')
+        return {item['path']: item['sha256'] for item in original}
+    if (config.get('admission_mode') != 'generic_only'
+            or binding.get('schema') != 'onnx-splitpoint/generic-only-energy-verifier-binding/v1'
+            or binding.get('original_source_files') != original
+            or binding.get('changed_functions') != ENERGY_VALIDATOR_FUNCTIONS):
+        raise ValueError('Generic energy original source binding differs')
+    def members(descriptor):
+        raw = _source(descriptor['path'], descriptor['sha256'])
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            members = archive.getmembers()
+            if any(not (item.isfile() or item.isdir()) or Path(item.name).is_absolute()
+                   or '..' in Path(item.name).parts for item in members):
+                raise ValueError('Energy source bundle path escapes its root')
+            entries = [item for item in members if item.isfile()]
+            return {item.name: archive.extractfile(item).read() for item in entries}
+    before, after = members(binding['original_bundle']), members(binding['energy_bundle'])
+    old_root, new_root = binding['original_runtime_root'].rstrip('/'), binding['energy_runtime_root'].rstrip('/')
+    source_map = {item['path']: item['sha256'] for item in original}
+    code = {path[len(old_root) + 1:]: digest for path, digest in source_map.items()
+            if path.startswith(old_root + '/runner/') or path.startswith(old_root + '/splitpoint_runners/')}
+    if not code or set(after) != set(code) or old_root == new_root:
+        raise ValueError('Energy source clone must contain exactly the original code closure')
+    def remainder(raw, functions):
+        text = raw.decode('utf-8'); lines = text.splitlines(keepends=True)
+        nodes = [node for node in ast.parse(text).body if isinstance(node, ast.FunctionDef) and node.name in functions]
+        if sorted(node.name for node in nodes) != sorted(functions):
+            raise ValueError('Energy validation function declaration differs')
+        for node in sorted(nodes, key=lambda item: item.lineno, reverse=True):
+            del lines[node.lineno - 1:node.end_lineno]
+        return ''.join(lines)
+    additions = []
+    for name, old_sha in code.items():
+        old, new = before[name], after[name]
+        if hashlib.sha256(old).hexdigest() != old_sha:
+            raise ValueError('Original energy bundle differs from the actual FPS source')
+        if name in ENERGY_VALIDATOR_FUNCTIONS:
+            functions = ENERGY_VALIDATOR_FUNCTIONS[name]
+            expected = Path(__file__).parent / 'runners' / Path(name).name
+            if new != expected.read_bytes() or remainder(old, functions) != remainder(new, functions):
+                raise ValueError('Energy validator changes exceed the declared reviewed functions')
+        elif name == 'runner/run_split_onnxruntime.py':
+            if old.decode().count(ENERGY_OLD_COUNT_CALL) != 1 or new != old.decode().replace(ENERGY_OLD_COUNT_CALL, ENERGY_NEW_COUNT_CALL, 1).encode():
+                raise ValueError('Energy runner differs outside its exact postflight actual-count call')
+        elif new != old:
+            raise ValueError('Energy clone changed an execution source: ' + name)
+        additions.append({'path': new_root + '/' + name, 'sha256': hashlib.sha256(new).hexdigest()})
+    evidence = binding.get('evidence') or []
+    if sorted(item.get('role') for item in evidence) != ['normal_admission_report', 'performance_result']:
+        raise ValueError('Energy source clone requires exactly its completed normal evidence')
+    for item in evidence:
+        _source(item['local']['path'], item['local']['sha256'])
+        additions.append({'path': item['runtime_path'], 'sha256': item['local']['sha256']})
+    expected = sorted([*original, *additions], key=lambda item: item['path'])
+    if len({item['path'] for item in expected}) != len(expected) or config['runtime_source_files'] != expected:
+        raise ValueError('Energy sources must retain every original file and exactly the checked clone')
+    return source_map
+
+
 def collect_generic_energy_case(plan, descriptors, case, *, performance_admission=None):
     """Admit three fresh captures and retain normal Generic quality gates."""
     if _acceptance_repetitions(plan) == 1:
@@ -240,7 +318,7 @@ def collect_generic_energy_case(plan, descriptors, case, *, performance_admissio
     reps = valid_split_completion_repetitions(performance, performance_config, result_root=performance_path.parent)
     if len(reps) != 3 or performance.get('process_repetition_policy') != 'separate_processes':
         raise ValueError('Generic energy requires three actual bound performance processes')
-    source_map = {x['path']: x['sha256'] for x in contract['source_files']}
+    source_map = verified_energy_performance_sources(config, performance_config)
     if any(r.get('runtime_source_binding') != {'before': source_map, 'after': source_map, 'unchanged': True}
            or r.get('execution_identity') != contract['execution_identity']
            or r.get('completion_runtime_mode', 'classification_top1_top5') != contract['completion_runtime_mode'] for r in reps):

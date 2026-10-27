@@ -55,6 +55,56 @@ def validate_generic_only_config(config, *, check_files=False):
 
     if not is_generic_only(config):
         raise ValueError("Generic-only configuration requires explicit admission")
+    energy = config.get('energy_capture')
+    if energy:
+        from .generic_energy import validate_config
+        validate_config(config)
+        reuse = energy.get('generic_only_control_reuse') or {}
+        report_descriptor = reuse.get('normal_admission_report') or {}
+        performance_descriptor = reuse.get('performance_result') or {}
+        sources = {item['path']: item['sha256'] for item in energy['contract']['source_files']}
+        def evidence_path(role, descriptor):
+            if sources.get(descriptor.get('path')) != descriptor.get('sha256'):
+                raise ValueError('Generic-only energy evidence is outside its source seal')
+            path = _descriptor(descriptor)
+            if check_files or path.is_file():
+                return _descriptor(descriptor, check_files=True)
+            # Controller imports use only the exact hash-checked local copy of
+            # this same role/path. DUT preflight never takes this alias path.
+            aliases = [item for item in energy.get('verifier_binding', {}).get('evidence', [])
+                       if item.get('role') == role and item.get('runtime_path') == descriptor['path']
+                       and item.get('local', {}).get('sha256') == descriptor['sha256']]
+            if len(aliases) != 1:
+                raise ValueError('Generic-only energy controller evidence alias differs')
+            return _descriptor(aliases[0]['local'], check_files=True)
+        report_path = evidence_path('normal_admission_report', report_descriptor)
+        performance_path = evidence_path('performance_result', performance_descriptor)
+        import json
+        report = json.loads(report_path.read_text())
+        performance = json.loads(performance_path.read_text())
+        admission = reuse.get('normal_admission') or {}
+        selected = [row for row in report.get('rows', []) if row.get('case_key') == admission.get('case_key')]
+        repetitions = performance.get('repetitions') or []
+        if (reuse.get('schema') != 'onnx-splitpoint/generic-only-energy-control-reuse/v1'
+                or performance_descriptor['sha256'] != energy.get('performance_result_sha256')
+                or performance.get('identity') != config['identity']
+                or performance.get('execution_id') != config['execution_id']
+                or performance.get('process_repetition_policy') != 'separate_processes'
+                or len(repetitions) != 3 or selected != [admission]
+                or admission.get('admission_mode') != 'generic_only'
+                or admission.get('eligible_for_generic_only_execution') is not True
+                or admission.get('native_performance_claimed') is not False
+                or len(admission.get('completion_attestations') or []) != 3
+                or config.get('mixed_input_control')):
+            raise ValueError('Generic-only energy requires exact completed normal control evidence')
+        for repetition in repetitions:
+            proof = repetition.get('mixed_input_control') or {}
+            if (proof.get('status') != 'passed' or proof.get('checked_outside_throughput_timer') is not True
+                    or proof.get('serial_reference_count') != 32 or proof.get('mixed_completed_count') != 32
+                    or proof.get('drain_completed') is not True
+                    or proof.get('stage1_execution') != config['stage1_execution']
+                    or proof.get('control_sidecar') != reuse.get('original_mixed_input_control')):
+                raise ValueError('Generic-only energy completed mixed control differs')
     original = config.get("original_run_cfg") or {}
     provider = str(original.get("stage1_provider") or original.get("provider") or "").lower()
     expected_policy = ({"policy": "hailo_async_slots_v1", "inflight": 8}
@@ -72,11 +122,10 @@ def validate_generic_only_config(config, *, check_files=False):
             and (config.get("completion_contract") != CLASSIFICATION_CONTRACT
                  or type(config["completion_contract"].get("label_offset")) is not int)):
         raise ValueError("Generic-only classification requires the normal Top1/Top5 contract")
-    if (config.get("energy_capture")
-            or original.get("native_split_quality_binding")
+    if (original.get("native_split_quality_binding")
             or config.get("native_source") or config.get("native_command_contract")):
         raise ValueError("Generic-only controls cannot claim a Native binding or energy result")
-    if not config.get("mixed_input_control"):
+    if not energy and not config.get("mixed_input_control"):
         raise ValueError("Generic-only execution requires the bound mixed-input control")
     binding = config.get("generic_artifact_binding")
     if not isinstance(binding, Mapping) or binding.get("schema") != ARTIFACT_SCHEMA:
@@ -242,14 +291,16 @@ def _semantic_result(value, expected_count, *, task="detection"):
     return semantic
 
 
-def compare_serial_reference(outputs, completed, reference_outputs, proof):
+def compare_serial_reference(outputs, completed, reference_outputs, proof, *, completed_count=1100):
+    if type(completed_count) is not int or completed_count <= 0:
+        raise ValueError('Generic-only completed count must be a positive actual count')
     task = (proof.get("completion_contract") or {}).get("task", "detection")
     if (set(outputs) != set(reference_outputs)
             or any(np.asarray(outputs[name]).dtype != reference_outputs[name].dtype
                    or np.asarray(outputs[name]).shape != reference_outputs[name].shape
                    or not np.array_equal(outputs[name], reference_outputs[name])
                    for name in reference_outputs)
-            or _semantic_result(completed, 1100, task=task)
+            or _semantic_result(completed, completed_count, task=task)
                != _semantic_result(proof["last_completed_result"], 1, task=task)):
         raise ValueError("Generic-only measured raw/completed output differs from its serial reference")
     if task == "classification" and (_json_value(completed) != _classification_result(outputs)
@@ -260,6 +311,11 @@ def compare_serial_reference(outputs, completed, reference_outputs, proof):
 def validate_serial_reference(repetition, config, *, result_root=None):
     """Normal importer verification, including actual saved array equality."""
     validate_generic_only_config(config)
+    completed_count = 1100
+    if config.get('energy_capture'):
+        from .task_completion import validate_split_completion_duration
+        validate_split_completion_duration(repetition, duration_s=config['energy_capture']['contract']['duration_s'])
+        completed_count = repetition['completed_work_units']
     if (config["stage1_execution"]["policy"] == "synchronous"
             and "stage1_peak_uncollected_jobs" in repetition):
         raise ValueError("Generic-only synchronous completion cannot claim an observed async peak")
@@ -276,11 +332,11 @@ def validate_serial_reference(repetition, config, *, result_root=None):
     task = config["task"]
     if (set(samples) != set(specs)
             or _semantic_result(proof.get("last_completed_result") or {}, 1, task=task)
-               != _semantic_result(repetition.get("last_completed_result") or {}, 1100, task=task)):
+               != _semantic_result(repetition.get("last_completed_result") or {}, completed_count, task=task)):
         raise ValueError("Generic-only serial reference endpoint/completed result differs")
     if task == "classification":
         validate_classification_report(proof.get("postprocess_report"), proof["last_completed_result"], 1)
-        validate_classification_report(repetition.get("postprocess_report"), repetition["last_completed_result"], 1100)
+        validate_classification_report(repetition.get("postprocess_report"), repetition["last_completed_result"], completed_count)
     for name, spec in specs.items():
         if any(samples[name].get(key) != value for key, value in spec.items()):
             raise ValueError("Generic-only serial tensor metadata differs")
@@ -309,4 +365,4 @@ def validate_serial_reference(repetition, config, *, result_root=None):
     completed = json.loads(bound(proof.get("completed_result_artifact") or {}).read_text(encoding="utf-8"))
     if completed != proof["last_completed_result"]:
         raise ValueError("Generic-only serial completion artifact differs")
-    compare_serial_reference(actual, repetition["last_completed_result"], arrays, proof)
+    compare_serial_reference(actual, repetition["last_completed_result"], arrays, proof, completed_count=completed_count)

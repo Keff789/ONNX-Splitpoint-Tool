@@ -133,7 +133,12 @@ def validate_config(config, *, expected_sha256=None, check_files=False):
         if runtime_execution_identity(config) != contract['execution_identity']:
             raise ValueError('Generic energy actual Python/environment differs from measured performance')
         descriptors = [*contract['source_files'], *config['expected_runtime_artifacts'].values(),
-                       config['input_binding']['prepared_input'], *config['functional_reference']['outputs'].values()]
+                       config['input_binding']['prepared_input']]
+        if config.get('admission_mode') == 'generic_only':
+            from .generic_only import validate_generic_only_config
+            validate_generic_only_config(config, check_files=True)
+        else:
+            descriptors += list(config['functional_reference']['outputs'].values())
         for descriptor in descriptors:
             if file_hash(descriptor['path']) != descriptor['sha256']:
                 raise ValueError('Generic energy source/artifact changed: ' + descriptor['path'])
@@ -226,6 +231,9 @@ def validate_energy_result(result, config, *, result_root=None):
                 expected_observation_relation='same_hotloop_sentinel')
     if result_root is not None:
         _validate_split_completion_samples(row, config, result_root)
+    if config.get('admission_mode') == 'generic_only':
+        from .generic_only import validate_serial_reference
+        validate_serial_reference(row, config, result_root=result_root)
     return row
 
 
