@@ -1,3 +1,24 @@
+## 27.10.2026 — Exakt gebundene Generic-Artefakte ohne Namespace-Migration
+
+Der rein lesende TensorRT-Preflight wies einen vorhandenen älteren Namespace
+bereits wegen fehlender Migrationsfähigkeit ab, bevor er die explizit gebundene
+Generic-Quality-Bridge prüfen konnte. Dieser Pfad führt die ausgewählten Dateien
+am ursprünglichen Ort aus und migriert keinen Cache. Der frühe Migrationsguard
+beachtet deshalb nun dieselbe explizite Generic-Artefaktbindung wie der spätere
+Enginekey-Guard. Ohne diese Bindung bleibt die bisherige Ablehnung erhalten.
+Owner/ABI, exakte Pfade, vollständiger Achtdatei-Beleg, Receipt, Command, Bytes,
+Quellbindung und Shapes werden weiterhin unverändert geprüft.
+
+Fünf neue gezielte Tests prüfen den vollständig gebundenen älteren H10-Bridge-
+Namespace, die weiterhin gesperrte gewöhnliche Migration sowie falsche Identität,
+fehlenden Owner und falsche Owner-ABI. Zusammen mit den bestehenden Generic-
+Preflight- und Legacy-Migrationstests bestehen 52 gezielte Tests. Die separate
+bestehende H8-Fixture mit deklariertem float32-Adapter scheitert auch unverändert
+auf 6ac am normalen Raw-uint8-Adapterguard und wird hier nicht geändert.
+Hardware-Runtime42/37, wissenschaftliche Verträge und vorhandene Artefakte bleiben
+bytegleich; der reale normale Preflight und nächste Lauf werden vom H10-Owner
+separat protokolliert. Kein Hardware-PASS wird aus diesen Softwaretests abgeleitet.
+
 ## 27.10.2026 — Physische Part2-Bridge in Generic Quality
 
 Im B4-Quellstand ist der bestehende Compilerbeleg lokal verifiziert und intern

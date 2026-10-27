@@ -3718,7 +3718,7 @@ def verify(receipt_path, root, namespace, owner_status, requirement):
         return None, "legacy_owner_missing", {}
     if owner_status == "legacy_owner_builder_abi_mismatch":
         return None, "legacy_owner_builder_abi_mismatch", {}
-    if owner_status == "legacy_namespace_not_runtime_migratable":
+    if owner_status == "legacy_namespace_not_runtime_migratable" and generic_artifacts is None:
         return None, "legacy_namespace_not_runtime_migratable", {}
     raw = load(receipt_path)
     declared = str(raw.pop("receipt_sha256", "") or "").lower()
