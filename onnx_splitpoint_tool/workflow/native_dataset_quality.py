@@ -125,6 +125,27 @@ def prepare_native_quality_action(config_path, *, target, python, remote_root,
         descriptor = file_descriptor(destination)
         inputs.append({**descriptor, "path": relative})
         config[field] = {**descriptor, "path": remote_root + "/" + relative}
+    if original.get('completion_source_probe_manifest'):
+        source_descriptor = original['completion_source_probe_manifest']
+        manifest = checked_json(source_descriptor)
+        source = Path(source_descriptor['path'])
+        relative = 'inputs/completion_source_probe/' + source.name
+        destination = stage / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        inputs.append({**file_descriptor(destination), 'path': relative})
+        config['completion_source_probe_manifest'] = {**source_descriptor, 'path': remote_root + '/' + relative}
+        for row in manifest['outputs']:
+            filename = Path(str(row.get('file') or ''))
+            if not filename.name or str(filename) != filename.name:
+                raise ValueError('Native Quality source probe file must be a relative filename')
+            source_file = source.parent / filename
+            checked = file_descriptor(source_file)
+            if any(checked[key] != row.get(key) for key in ('sha256', 'size_bytes')):
+                raise ValueError('Native Quality measured source probe bytes changed')
+            destination_file = destination.parent / filename
+            shutil.copyfile(source_file, destination_file)
+            inputs.append({**checked, 'path': destination_file.relative_to(stage).as_posix()})
     config["native"]["native_split_quality_binding"] = config["prior_artifact_selection_file"]["path"]
     _write(stage / "capture_config.json", config)
     closure.append({**file_descriptor(stage / "capture_config.json"), "path": "capture_config.json"})
