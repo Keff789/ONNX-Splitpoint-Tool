@@ -22030,7 +22030,14 @@ def main() -> int:
                             row["task_quality_reference_source"] = "management_cpu_reference_pending"
                     if mini_coco_ap50_enabled:
                         if ann_exists:
-                            if dets_gt_for_ap50 is None:
+                            if _generic_quality_completion is not None:
+                                # Completed Generic records already use original
+                                # image pixels; keep the proxy's crowd filtering.
+                                dets_gt_for_ap50, warn_gt_ap50 = _load_semantic_reference_detections_original(
+                                    img_file, labels=labels,
+                                )
+                                mini_coco_warnings_variant.extend(list(warn_gt_ap50 or []))
+                            elif dets_gt_for_ap50 is None:
                                 dets_gt_for_ap50, warn_gt_ap50 = _load_semantic_reference_detections(
                                     img_file,
                                     img_hw=local_img_hw,

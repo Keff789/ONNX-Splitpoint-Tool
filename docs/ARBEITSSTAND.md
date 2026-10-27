@@ -1,3 +1,20 @@
+## 27.10.2026 — Originalbild-Koordinaten für den lokalen Generic-Mini-AP-Proxy
+
+Generic Completed Quality liefert bereits Detektionen in Originalbild-Pixeln.
+Der separate lokale Mini-AP-Proxy verglich diese bisher mit Ground Truth in
+Letterbox-Modellkoordinaten. Nur dieser Berichtszweig verwendet jetzt den
+bestehenden Originalbild-Loader mit unveränderter Crowd-Filterung. Der bisherige
+Proxy für Modellkoordinaten bleibt unverändert; Vorhersagen, zentrale COCO-Auswertung, CPU-Referenz,
+Inferenz, Preprocessing und Completionvertrag werden nicht geändert.
+
+Ein gezieltes 640×426-zu-640×640-Koordinatenfixture zeigt den bisherigen falschen
+Nullwert und den korrekten Mini-AP-Wert für eine ideale Originalbild-Detektion.
+Zusammen mit den bestehenden Completion- und Mini-AP-Bootstrap-Regressionen
+bestanden 35 Softwaretests. Dies ist eine Berichtskorrektur für zukünftige
+Runner. Die laufenden Aufnahmen und Quellfreeze 6acdf869 bleiben unverändert;
+der Proxyfehler erfordert keine neue Inferenzaufnahme und bestimmt keinen
+zentralen Qualitätsentscheid.
+
 ## 27.10.2026 — Physische Part2-Bridge in Generic Quality
 
 Im B4-Quellstand ist der bestehende Compilerbeleg lokal verifiziert und intern
