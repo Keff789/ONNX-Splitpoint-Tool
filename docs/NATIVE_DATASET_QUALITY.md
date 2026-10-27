@@ -48,6 +48,14 @@ no class-name annotation changes the attested records.
 ManagementQualityService and normal result enrichment. It creates no pool and
 runs no reference inference or additional detector postprocessor.
 
+For separately published Native capture source epochs, the management caller
+supplies the genuine producer `SOURCEFREEZE_READY` descriptor as
+`producer_source_freeze`. The normal installed-source guard verifies it. The
+consumer checks unchanged runtime/statistics sources and the reviewed model
+metadata difference, then checks the finite producer source files against that
+exact release. A request cannot choose a replacement source root. Actual
+producer and consumer identities remain separate in the shared service.
+
 Preparation JSON supplies `config_path`, normal `target`, remote `python`,
 fresh absolute `remote_root`, fresh `output_root`, and the immutable
 `source_freeze` descriptor. Optional `reserve_bytes`, `forecast_bytes` and

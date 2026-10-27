@@ -5,6 +5,8 @@ from dataclasses import replace
 import importlib.util
 import hashlib
 import json
+import ast
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -231,3 +233,64 @@ def test_actual_native_class_id_only_has_identical_ap_to_named_cpu_class(canonic
     assert actual['primary']['reference'] == pytest.approx(1.)
     # COCO category id 1 must not be confused with the model's contiguous id 0.
     assert metrics(dict(native, class_id=1))['primary']['candidate'] == 0.
+
+
+def test_explicit_published_producer_scope_keeps_old_hashes_and_same_science(tmp_path, monkeypatch, producer):
+    from onnx_splitpoint_tool import source_integrity
+    current = Path(consumer.__file__).resolve().parents[1]
+    published = tmp_path / 'published_source'
+    # Copy only the finite source closure and statistical consumers used by the
+    # scope, leaving the installed-source verifier as the separately tested boundary.
+    relatives = consumer.required_native_dataset_source_paths('hailo8_to_trt') | consumer.required_native_dataset_source_paths('hailo10_to_trt')
+    relatives |= {'onnx_splitpoint_tool/' + name for name in (
+        'quality_service.py', 'quality_metrics.py', 'quality_cache.py', 'quality_statistics_config.py',
+        'accuracy_reporting.py', 'quality_result_enrichment.py', 'quality_lifecycle.py', 'preprocessing_contract.py',
+        'native_command_contract.py', 'native_split_quality.py', 'native_output_endpoint.py')}
+    relatives.add('onnx_splitpoint_tool/workflow/runner.py')
+    for name in relatives:
+        target = published / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(current / name, target)
+    capture = published / 'onnx_splitpoint_tool/native_dataset_quality.py'
+    tree = ast.parse(capture.read_text())
+    next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'load_capture_config').body.insert(0, ast.Pass())
+    capture.write_text(ast.unparse(tree) + '\n')
+    manifest = published / 'SOURCE_MANIFEST.json'
+    manifest.write_text('{}')
+    def descriptor(path):
+        encoded = path.read_bytes()
+        return {'path': str(path), 'sha256': hashlib.sha256(encoded).hexdigest(), 'size_bytes': len(encoded)}
+    release_path = tmp_path / 'SOURCEFREEZE_READY.json'
+    release = {'pushed': True, 'commit': 'c' * 40, 'source_export_root': str(published), 'source_manifest': descriptor(manifest)}
+    release_path.write_text(json.dumps(release))
+    release_descriptor = descriptor(release_path)
+    calls = []
+    monkeypatch.setattr(source_integrity, 'verify_installed_source_integrity', lambda root: calls.append(root) or {'ok': True})
+    old_producer = deepcopy(producer)
+    for source in old_producer['implementation_source_files']:
+        source.update(descriptor(published / source['relative_path']))
+    old_producer = seal(old_producer)
+    # A root supplied inside a candidate is never trusted.
+    old_producer['source_export_root'] = str(published)
+    old_producer = seal(old_producer)
+    with pytest.raises(QualityArtifactIntegrityError, match='source differs'):
+        consumer.validate_native_dataset_quality_producer(old_producer, role='request', task='detection')
+    with consumer.published_native_producer_source_scope(release_descriptor) as proof:
+        assert proof['commit'] == 'c' * 40
+        assert consumer.validate_native_dataset_quality_producer(old_producer, role='request', task='detection')[0] == old_producer
+    assert calls == [published]
+    with pytest.raises(QualityArtifactIntegrityError, match='source differs'):
+        consumer.validate_native_dataset_quality_producer(old_producer, role='request', task='detection')
+    # A published location cannot excuse a different metric/runtime implementation.
+    metrics = published / 'onnx_splitpoint_tool/quality_metrics.py'
+    metrics.write_text(metrics.read_text() + '\n# different source\n')
+    with pytest.raises(QualityArtifactIntegrityError, match='scientific or runtime source differs'):
+        with consumer.published_native_producer_source_scope(release_descriptor):
+            pytest.fail('different scientific source admitted')
+
+
+def test_h10_source_paths_follow_normal_backend_alias_canonicalization():
+    expected = consumer.required_native_dataset_source_paths('hailo10h_to_trt')
+    assert len(expected) == 7
+    assert consumer.required_native_dataset_source_paths('hailo10_to_trt') == expected
+    assert consumer.required_native_dataset_source_paths('hailo10_to_tensorrt') == expected

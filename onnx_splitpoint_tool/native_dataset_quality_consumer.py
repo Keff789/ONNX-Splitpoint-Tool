@@ -9,7 +9,10 @@ implemented here.
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
+import ast
 import json
 import hashlib
 from pathlib import Path
@@ -17,6 +20,69 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 
 NATIVE_DATASET_PRODUCER_SCHEMA = "onnx-splitpoint/native-dataset-quality-producer"
+_PUBLISHED_PRODUCER_ROOT = ContextVar("native_dataset_published_producer_root", default=None)
+
+
+def _capture_execution_ast(path):
+    tree = ast.parse(path.read_text())
+    body = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {"load_capture_config", "_timed_model_identity"}:
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module == "native_command_contract":
+            node.names = [name for name in node.names if name.name != "verify_native_command_contract"]
+        body.append(node)
+    return ast.dump(ast.Module(body=body, type_ignores=[]), include_attributes=False)
+
+
+@contextmanager
+def published_native_producer_source_scope(source_freeze=None):
+    """Read source proofs from a caller-bound published producer, never a request root.
+
+    Only the separately reviewed model-alias loader may differ. Capture,
+    postprocessing, Native hotloops, metrics and statistical policy remain the
+    same implementation. This changes evidence lookup, not executable imports.
+    """
+    current = Path(__file__).resolve().parents[1]
+    if source_freeze is None:
+        yield None
+        return
+    from .quality_service import _load_quality_artifact
+    from .source_integrity import verify_installed_source_integrity
+    _descriptor(source_freeze, "caller published Native source freeze")
+    path = Path(source_freeze["path"])
+    release, _, _ = _load_quality_artifact(source_freeze, path, verify=True)
+    _need(release.get("pushed") is True and isinstance(release.get("commit"), str)
+          and len(release["commit"]) == 40, "Native producer source is not a published release")
+    root = Path(str(release.get("source_export_root") or "")).resolve()
+    manifest = release.get("source_manifest")
+    _descriptor(manifest, "Native producer source manifest")
+    _need(Path(manifest["path"]).resolve() == root / "SOURCE_MANIFEST.json", "Native producer manifest root differs")
+    _load_quality_artifact(manifest, path, verify=True)
+    integrity = verify_installed_source_integrity(root)
+    _need(integrity.get("ok") is True, "Native producer installed source verification failed")
+    critical = (required_native_dataset_source_paths("hailo8_to_trt") | required_native_dataset_source_paths("hailo10_to_trt")) - {
+        "onnx_splitpoint_tool/native_dataset_quality.py"}
+    critical |= {"onnx_splitpoint_tool/" + name for name in (
+        "quality_service.py", "quality_metrics.py", "quality_cache.py", "quality_statistics_config.py",
+        "accuracy_reporting.py", "quality_result_enrichment.py", "quality_lifecycle.py", "preprocessing_contract.py",
+        "native_command_contract.py", "native_split_quality.py", "native_output_endpoint.py")}
+    critical.add("onnx_splitpoint_tool/workflow/runner.py")
+    for relative in critical:
+        _need((root / relative).is_file(), "Native producer compatible source missing: " + relative)
+        _need((root / relative).read_bytes() == (current / relative).read_bytes(),
+              "Native producer/consumer scientific or runtime source differs: " + relative)
+    capture = "onnx_splitpoint_tool/native_dataset_quality.py"
+    _need(_capture_execution_ast(root / capture) == _capture_execution_ast(current / capture),
+          "Native producer/consumer capture execution differs beyond model metadata")
+    proof = {"source_freeze": dict(source_freeze), "commit": release["commit"], "source_manifest": manifest,
+             "installed_source_verified": True, "scientific_and_runtime_sources_identical": sorted(critical),
+             "capture_execution_unchanged_metadata_alias_only": True}
+    token = _PUBLISHED_PRODUCER_ROOT.set(root)
+    try:
+        yield proof
+    finally:
+        _PUBLISHED_PRODUCER_ROOT.reset(token)
 
 
 def required_native_dataset_source_paths(backend):
@@ -34,7 +100,7 @@ def required_native_dataset_source_paths(backend):
         return common | {"onnx_splitpoint_tool/native_dataset_quality_h8.py",
             "onnx_splitpoint_tool/resources/remote_scripts/native_hailo_trt_fifo_from_benchmarkset.py",
             "onnx_splitpoint_tool/resources/remote_scripts/native_hailo10_trt_e2e_from_benchmarkset.py"}
-    _need(selected == "hailo10_to_trt", "Native dataset backend unsupported")
+    _need(selected == "hailo10h_to_trt", "Native dataset backend unsupported")
     return common | {"onnx_splitpoint_tool/native_dataset_quality_h10.py", "scripts/native_hailo10_trt_e2e_from_benchmarkset.py"}
 
 
@@ -135,7 +201,7 @@ def validate_native_dataset_quality_producer(value: Any, *, role: str, task: str
               and ".." not in relative.parts, f"{role} Native source relative path invalid")
         _need(relative.as_posix() not in source_paths, f"{role} duplicate Native source path")
         source_paths.add(relative.as_posix())
-        root = Path(__file__).resolve().parents[1]
+        root = _PUBLISHED_PRODUCER_ROOT.get() or Path(__file__).resolve().parents[1]
         actual = root / relative
         _need(actual.resolve().is_relative_to(root) and actual.is_file(), f"{role} Native source missing")
         encoded = actual.read_bytes()
@@ -225,13 +291,15 @@ class NativeQualityRequest:
     identity: Mapping[str, Any]
     reference_status: Mapping[str, Any]
     reference_store_manifest: str
+    producer_source: Mapping[str, Any] | None = None
 
 
 def load_native_quality_request(request_path, *, run_dir, model_id, reference_run_dir,
                                 reference_artifact, reference_status,
                                 expected_reference_source_contract_sha256,
                                 expected_metric_gate_config, expected_policy_sha256,
-                                expected_seed=20260710, expected_confidence_level=.95):
+                                expected_seed=20260710, expected_confidence_level=.95,
+                                producer_source_freeze=None):
     """Load a new Native capture with a genuinely reused canonical CPU artifact."""
     from .quality_service import quality_request_from_manifest
     from .workflow.runner import EvaluationWorkflowRunner as Runner
@@ -249,19 +317,20 @@ def load_native_quality_request(request_path, *, run_dir, model_id, reference_ru
         expected_source_contract=expected_reference_source_contract_sha256)
     bound = {"path": status["reference_path"], "sha256": status["reference_sha256"], "size_bytes": status["reference_size_bytes"]}
     _need(all(reference_artifact.get(name) == value for name, value in bound.items()), "Native CPU reference descriptor differs from normal status")
-    request = quality_request_from_manifest(path, reference_artifact=bound, reference_artifact_bytes=encoded)
+    with published_native_producer_source_scope(producer_source_freeze) as producer_source:
+        request = quality_request_from_manifest(path, reference_artifact=bound, reference_artifact_bytes=encoded)
+        identity = Runner._quality_request_identity(path, model_id=model_id, variant=manifest.get("variant", ""), manifest=manifest)
     _need(len(request.candidate_records) == 5000 and request.repetitions == 1000,
           "Native dataset quality requires N5000/B1000")
     _need(request.seed == expected_seed and request.confidence_level == expected_confidence_level,
           "Native request seed/confidence differs from original quality policy")
-    identity = Runner._quality_request_identity(path, model_id=model_id, variant=manifest.get("variant", ""), manifest=manifest)
     _need(identity.get("identity_valid") is True and identity.get("producer_identity_validated") is True,
           "Native request identity invalid: " + str(identity.get("identity_errors")))
     context = SimpleNamespace(run_dir=root, _central_quality_reference_store=None, dataset_registry_binding={})
     reference_identity, stored = Runner._central_reference_contract(context, model_id, records, status)
     request = replace(request, reference_identity=reference_identity.fingerprint(),
                       request_id=f"{model_id}:{request.request_id}:{sha256_file(path)}")
-    return NativeQualityRequest(request, path, root, model_id, manifest, identity, status, str(stored.get("manifest_path") or ""))
+    return NativeQualityRequest(request, path, root, model_id, manifest, identity, status, str(stored.get("manifest_path") or ""), producer_source)
 
 
 def evaluate_native_quality_request(loaded: NativeQualityRequest, *, service):
@@ -271,8 +340,11 @@ def evaluate_native_quality_request(loaded: NativeQualityRequest, *, service):
     from .workflow.runner import EvaluationWorkflowRunner as Runner
     result = completed_outcome(service.evaluate(loaded.request))
     case_id, source_run = Runner._quality_request_scope(loaded.request_path)
-    return enrich_completed_quality_result(result, request_identity=loaded.identity,
+    result = enrich_completed_quality_result(result, request_identity=loaded.identity,
         manifest=loaded.manifest, model_id=loaded.model_id, request_path=loaded.request_path,
         run_dir=loaded.run_dir, collection_eval_run_id=loaded.run_dir.name, case_id=case_id,
         run_id=source_run, reference_status=loaded.reference_status,
         reference_store_manifest=loaded.reference_store_manifest)
+    if loaded.producer_source is not None:
+        result["native_dataset_producer_source"] = deepcopy(dict(loaded.producer_source))
+    return result
