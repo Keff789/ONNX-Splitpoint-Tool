@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 
 SCHEMA = "onnx-splitpoint/generic-composed-quality-endpoint-role-projection"
+ORIGINAL_SEMANTIC_VARIANT = "preserve_original_semantic_endpoint_v1"
 
 
 def _hash(value):
@@ -55,7 +56,31 @@ def _roles(authority, full, part2):
     return projected
 
 
-def project_generic_quality_endpoint(authority, *, full_model, part2_source):
+def _original_semantic(authority, full, part2, semantic, completion):
+    """The original model-unidentified semantic endpoint loses only role fields."""
+    projected = _roles(authority, full, part2)
+    projected.pop("full_model_sha256")
+    declared = (projected.get("output_endpoint_attestation") or {}).get("declared_contract") or {}
+    if (semantic != projected or any(projected.get(key) or declared.get(key)
+            for key in ("model_sha256", "full_model_sha256", "terminal_model_sha256"))):
+        raise ValueError("Generic Quality original semantic endpoint differs from exact role projection")
+    if __package__ == "splitpoint_runners":
+        from . import native_detection_postprocess as product
+    else:
+        from .. import native_detection_postprocess as product
+    base = product.verify_detection_completion_execution_contract(completion)
+    expected = {key: projected.get(key) for key in (
+        "task", "stage", "contract_family", "endpoint_contract_hash", "tensor_signature")}
+    expected["output_endpoint_id"] = "detection:%s:%s" % (
+        projected.get("stage"), projected.get("endpoint_contract_hash"))
+    expected["output_endpoint_attestation_sha256"] = _hash(projected.get("output_endpoint_attestation"))
+    if base["source_endpoint"] != expected:
+        raise ValueError("Generic Quality original completion source differs from semantic endpoint")
+    return deepcopy(projected), base["contract_sha256"]
+
+
+def project_generic_quality_endpoint(authority, *, full_model, part2_source,
+        original_semantic_endpoint=None, original_completion_contract=None):
     """Create metadata from independently hashed existing full and P2 ONNX."""
     identities = []
     for value in (full_model, part2_source):
@@ -71,6 +96,13 @@ def project_generic_quality_endpoint(authority, *, full_model, part2_source):
         "field_roles": {"full_model_sha256": "full_model_semantic_identity",
             "terminal_model_sha256": "independently_bound_part2_source_onnx"},
         "projected_fields_removed": ["terminal_model_sha256"]}
+    if original_semantic_endpoint is not None or original_completion_contract is not None:
+        projected, completion_sha = _original_semantic(authority, full, part2,
+            original_semantic_endpoint, original_completion_contract)
+        proof.update(projection_variant=ORIGINAL_SEMANTIC_VARIANT,
+            original_completion_contract_sha256=completion_sha,
+            semantic_source_endpoint_sha256=_hash(projected),
+            projected_fields_removed=["full_model_sha256", "terminal_model_sha256"])
     proof["projection_sha256"] = _hash(proof)
     return {"source_endpoint_authority": deepcopy(dict(authority)),
         "source_endpoint_projection": proof, "source_endpoint_contract": projected}
@@ -99,12 +131,23 @@ def verify_generic_quality_endpoint_projection(config, *, check_files=False, ful
     full, part2 = _identity(proof.get("full_model")), _identity(proof.get("part2_source"))
     expected_part2 = ((config.get("expected_runtime_artifacts") or {}).get("source_part2_onnx") or {})
     projected = _roles(authority, full, part2)
+    removed = ["terminal_model_sha256"]
+    if "projection_variant" in proof:
+        if proof["projection_variant"] != ORIGINAL_SEMANTIC_VARIANT:
+            raise ValueError("Generic Quality endpoint role projection variant invalid")
+        projected, completion_sha = _original_semantic(authority, full, part2, source,
+            config.get("completion_contract", config.get("base_completion_contract")))
+        if proof.get("original_completion_contract_sha256") != completion_sha:
+            raise ValueError("Generic Quality original completion contract differs from role projection")
+        removed = ["full_model_sha256", "terminal_model_sha256"]
+    elif "original_completion_contract_sha256" in proof:
+        raise ValueError("Generic Quality endpoint role projection variant missing")
     if (_hash(unsealed) != seal or _identity(expected_part2) != part2
             or proof.get("authority_sha256") != _hash(authority)
             or source != projected or proof.get("semantic_source_endpoint_sha256") != _hash(source)
             or proof.get("field_roles") != {"full_model_sha256": "full_model_semantic_identity",
                 "terminal_model_sha256": "independently_bound_part2_source_onnx"}
-            or proof.get("projected_fields_removed") != ["terminal_model_sha256"]):
+            or proof.get("projected_fields_removed") != removed):
         raise ValueError("Generic Quality endpoint source role projection differs")
     if check_files and _file(expected_part2["path"]) != part2:
         raise ValueError("Generic Quality actual Part2 source differs from role projection")

@@ -16244,7 +16244,8 @@ def main() -> int:
             expected_workspace_mb=int(args.native_trt_workspace_mb))
 
     if str(getattr(args, "generic_quality_completion_config", "") or "").strip():
-        from splitpoint_runners.generic_quality_completion import load_quality_completion_config
+        from splitpoint_runners.generic_quality_completion import (
+            load_quality_completion_config, verify_quality_generated_model_sources)
         quality_completion = load_quality_completion_config(
             args.generic_quality_completion_config, check_files=True)
         quality_identity = quality_completion["identity"]
@@ -16259,10 +16260,8 @@ def main() -> int:
             raise ValueError("Generic Quality completion differs from its selected runtime identity")
         bound_artifacts = quality_completion["expected_runtime_artifacts"]
         generic_paths = {role: Path(record["path"]) for role, record in bound_artifacts.items()}
-        if (any(_sp_file_sha256(path) != bound_artifacts[role]["sha256"] for role, path in (
-                ("source_part1_onnx", p1_path), ("source_part2_onnx", p2_path)))
-                or _sp_file_sha256(full_path) != quality_completion["source_endpoint_contract"]["full_model_sha256"]):
-            raise ValueError("Generic Quality generated model metadata differs from its producer")
+        verify_quality_generated_model_sources(quality_completion, full_model_path=full_path,
+            part1_model_path=p1_path, part2_model_path=p2_path)
         quality_original = quality_completion.get("original_run_cfg") or {}
         args.native_trt_precision = str(quality_original.get("native_trt_precision") or args.native_trt_precision)
         args.native_trt_workspace_mb = int(quality_original.get("native_trt_workspace_mb") or args.native_trt_workspace_mb)

@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2417,
+  "file_count": 2418,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 539448,
-      "sha256": "59f32cf42d63234c046b7dd0abb7bf46b2e4acacd8e33f4a04648d93a67e4968"
+      "size": 541320,
+      "sha256": "9e5f8fcde91a6b01f622f58a83ff9968af0ddd5afa37ddcdb1e3bfe8c1ce6a30"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -2106,8 +2106,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/templates/run_split_onnxruntime.py.txt",
-      "size": 1132958,
-      "sha256": "2a3b7df6c661a37b2931af1a006037b08d5f3f42f15cb1b342dc30feec09be72"
+      "size": 1132779,
+      "sha256": "bbcfa96dd5547084a3e5153f5625f42b2a4c227437020fca3b597a3b9f58c4e6"
     },
     {
       "path": "onnx_splitpoint_tool/resources/templates/scientific_reporter_v60.py.txt",
@@ -2281,13 +2281,13 @@
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_quality_completion.py",
-      "size": 66614,
-      "sha256": "c49b9f7eda029fbff7c286203e175cb7583e752013d82a4ef90bf40d2f87ceba"
+      "size": 67421,
+      "sha256": "85d7c09e9a1431dc0620ce70caef72f40f6c40768d43305db50dc3c558d964d0"
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_quality_endpoint.py",
-      "size": 6155,
-      "sha256": "152320f85b0188c031eba2ad7602fcfcd2b4c202b406b859ae62370fd600fc01"
+      "size": 9055,
+      "sha256": "944ea5a2804685c44edea54601ef113fe2a4df6c5dd0e7ecc87c392841589959"
     },
     {
       "path": "onnx_splitpoint_tool/runners/graph_runner.py",
@@ -7648,6 +7648,11 @@
       "path": "tests/test_generic_only_runtime.py",
       "size": 8842,
       "sha256": "f4fcdb830fccad96a971e727f896c9aa154cc250e1984e066739ffbd58b370ea"
+    },
+    {
+      "path": "tests/test_generic_original_semantic_projection.py",
+      "size": 7303,
+      "sha256": "0d16306364bf99fb7734ab248b86f5a64fd3791ff733fbf303aed11776d13797"
     },
     {
       "path": "tests/test_generic_orphan_recovery.py",

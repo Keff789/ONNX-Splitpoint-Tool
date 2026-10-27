@@ -1,3 +1,32 @@
+## 27.10.2026 — Ursprüngliche Generic-Completion mit getrennten Quellrollen
+
+Ein älterer gemessener Completionvertrag enthält bewusst keine Modellhash-Aliase
+im semantischen Outputendpoint. Die vorhandene Full-/Part2-Projektion behielt
+den Full-Alias und änderte dadurch den normalen pro-Bild-Policyvergleich. Eine
+explizite neue Projektionsvariante erhält nun exakt den ursprünglichen
+semantischen Endpoint und den normal verifizierten ursprünglichen
+Completionvertrag. Sie entfernt ausschließlich die beiden getrennt belegten
+Rollenfelder full_model_sha256 und terminal_model_sha256; andere Unterschiede
+oder Modellhash-Aliase sind nicht zulässig. Der vollständige Authoritybeleg,
+Full-/Part2-SHA und Dateigrößen sowie der ursprüngliche Completionhash bleiben
+versiegelt und werden im Export und Consumer erneut geprüft.
+
+Der tatsächliche generierte Runner verlangt diesen normalen Rollenbeleg und
+prüft die tatsächlichen Full-, Part1- und Part2-Quelldateien. Er liest den
+Full-Hash aus dem verifizierten Rollenbeleg statt aus einem optionalen
+semantischen Alias. Es gibt keinen Identity-Fallback. Der exakte vorhandene
+_same_policy-Vergleich und die ursprünglichen gemessenen Completionmetadaten
+bleiben unverändert.
+
+54 gezielte CPU-Tests bestanden, einschließlich tatsächlichem gerendertem
+Main-Guard, normalem Observer/process/capture-Finish, Export und Consumer mit
+base_completion_contract sowie falschen Full-/Part2-Bytes, Semantik-, Proofhash-,
+fehlenden Proof- und zusätzlichen Feldentfernungen. Genau drei Hardware-Runtime-
+Member ändern sich: Runner, generic_quality_completion und generic_quality_endpoint.
+Statistikalgorithmus, wissenschaftliche Parameter, Compilate und Referenzen
+werden nicht verändert. Reale Preflight-/Captureergebnisse werden separat vom
+H10-Owner protokolliert; diese Softwaretests sind kein Hardware-PASS.
+
 ## 27.10.2026 — Exakt gebundene Generic-Artefakte ohne Namespace-Migration
 
 Der rein lesende TensorRT-Preflight wies einen vorhandenen älteren Namespace

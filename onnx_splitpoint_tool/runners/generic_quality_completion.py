@@ -450,6 +450,21 @@ def _verify_runtime_producer(config, context):
             full_model_path=context["source_model_path"])
 
 
+def verify_quality_generated_model_sources(config, *, full_model_path,
+        part1_model_path, part2_model_path):
+    """Require normal sealed role proof and actual full/P1/P2 producer bytes."""
+    projection = _endpoint.verify_generic_quality_endpoint_projection(config,
+        check_files=True, full_model_path=full_model_path)
+    if projection is None:
+        raise ValueError("Generic Quality generated producer requires source role projection")
+    artifacts = config["expected_runtime_artifacts"]
+    if any(_sha(path) != artifacts[role]["sha256"] for role, path in (
+            ("source_part1_onnx", part1_model_path),
+            ("source_part2_onnx", part2_model_path))):
+        raise ValueError("Generic Quality generated model metadata differs from its producer")
+    return projection
+
+
 def _source_implementation_check(source_map, *, runner_source=None):
     required = [Path(__file__).resolve(), Path(_product().__file__).resolve(),
                 Path(_three_stage().__file__).resolve(), Path(_product()._yolo_module.__file__).resolve(),
