@@ -16,6 +16,7 @@ import tarfile
 import uuid
 
 from ..native_dataset_quality import checked_json, file_descriptor
+from ..native_command_contract import verify_native_command_contract
 from ..remote_runtime_closure import (
     NATIVE_DATASET_QUALITY_PACKAGE_CLOSURE, NATIVE_DATASET_QUALITY_RESOURCE_CLOSURE,
 )
@@ -44,6 +45,33 @@ def capacity_admission(path, *, reserve_bytes, forecast_bytes):
     return result
 
 
+def _native_process_environment(config):
+    """Reuse only the process-local sites sealed by the measured Native job."""
+    timed = checked_json(config['timed_fps_authority'])
+    raw = timed.get('native_command_contract')
+    if raw is None:
+        if config.get('native', {}).get('process_local_extra_sites'):
+            raise ValueError('Native Quality extra sites lack measured command authority')
+        return {}
+    identity = config['identity']
+    command, status = verify_native_command_contract(raw, expected_identity={
+        'model': identity['model_id'], 'case': identity['case_id'],
+        'setup_id': identity['setup_id'], 'backend': identity['backend'],
+        'precision': identity['runtime_precision_identity'],
+    })
+    if command is None:
+        raise ValueError('Native Quality measured process environment invalid: ' + status)
+    sites = command.get('runtime_options', {}).get('process_local_extra_sites') or []
+    if (not isinstance(sites, list) or any(not isinstance(path, str)
+            or not PurePosixPath(path).is_absolute() or ':' in path
+            or any(char in path for char in ('\n', '\r', '\x00')) for path in sites)):
+        raise ValueError('Native Quality measured process-local sites invalid')
+    supplied = config.get('native', {}).get('process_local_extra_sites', sites)
+    if supplied != sites:
+        raise ValueError('Native Quality process-local sites conflict with measured command')
+    return {'SPLITPOINT_EXTRA_SITES': ':'.join(sites)} if sites else {}
+
+
 def prepare_native_quality_action(config_path, *, target, python, remote_root,
                                   output_root, source_freeze,
                                   reserve_bytes=24 * 1024**3, forecast_bytes=2 * 1024**3,
@@ -61,6 +89,7 @@ def prepare_native_quality_action(config_path, *, target, python, remote_root,
         raise ValueError("Native Quality target/no-build authority differs")
     if not PurePosixPath(remote_root).is_absolute() or timeout_s <= 0:
         raise ValueError("Native Quality private remote path/timeout invalid")
+    environment = _native_process_environment(original)
     # The immutable release descriptor is itself hash bound, and the staged
     # module list is rehashed before and after the actual capture.
     ready = checked_json(source_freeze)
@@ -110,6 +139,7 @@ def prepare_native_quality_action(config_path, *, target, python, remote_root,
     remote_output = remote_root + "/results/" + relative_output
     command = shlex.join([
         "env", "-u", "ONNX_SPLITPOINT_ARTIFACT_POLICY", "ONNX_SPLITPOINT_NATIVE_TRT_BUILD=0",
+        *(name + '=' + value for name, value in environment.items()),
         python, "-B", remote_root + "/scripts/native_dataset_quality.py",
         "--config", remote_root + "/capture_config.json", "--out", remote_output,
     ])
@@ -120,6 +150,7 @@ def prepare_native_quality_action(config_path, *, target, python, remote_root,
         "stage_archive": file_descriptor(archive), "source_files": closure, "input_files": inputs,
         "source_integrity": source_integrity,
         "command": command, "timeout_s": timeout_s, "capacity": admission,
+        "environment": environment,
         "engine_build_allowed": False, "performance_claims_emitted": False,
         "expected_images": 5000, "identity": identity}
     _write(out / "ACTION.json", action)

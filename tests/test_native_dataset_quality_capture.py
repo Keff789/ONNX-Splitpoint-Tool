@@ -30,6 +30,7 @@ from onnx_splitpoint_tool.quality_service import quality_request_from_manifest
 from onnx_splitpoint_tool.workflow.runner import EvaluationWorkflowRunner
 from test_v269d_trt_central_quality_producer import _detection_quality_contract
 from test_v269f_native_split_receipt_validation import _fixture_payload
+from test_v269f_native_split_receipt_validation import _native_row_for_binding
 from test_v272_detection_completion_runtime import _decoded_outputs
 
 
@@ -291,4 +292,32 @@ def test_original_timed_authority_must_bind_actual_contract_artifacts_and_comple
     _write(fixture.path, fixture.config)
     with pytest.raises(ValueError, match=message):
         fixture.actual_load(fixture.path)
+    assert not fixture.state.events
+
+
+@pytest.mark.parametrize('fault', [None, 'invalid_seal', 'wrong_command_model', 'top_alias_conflict', 'missing_command'])
+def test_timed_model_without_top_alias_requires_verified_native_command(fixture: SimpleNamespace, fault: str) -> None:
+    from onnx_splitpoint_tool.native_command_contract import seal_native_command_contract
+    path = Path(fixture.config['timed_fps_authority']['path'])
+    timed = json.loads(path.read_text())
+    timed.pop('model_id', None)
+    timed.pop('model', None)
+    command = _native_row_for_binding(fixture.config['prior_artifact_selection'])['native_command_contract']
+    timed['native_command_contract'] = command
+    if fault == 'invalid_seal':
+        command['model'] = 'wrong'
+    elif fault == 'wrong_command_model':
+        command['model'] = 'wrong'
+        timed['native_command_contract'] = seal_native_command_contract(command)
+    elif fault == 'top_alias_conflict':
+        timed['model_id'] = 'wrong'
+    elif fault == 'missing_command':
+        timed.pop('native_command_contract')
+    fixture.config['timed_fps_authority'] = _write(path, timed)
+    _write(fixture.path, fixture.config)
+    if fault is None:
+        assert len(fixture.actual_load(fixture.path)['_ground_truth_records']) == 5000
+    else:
+        with pytest.raises(ValueError, match='timed (Native command invalid|model)'):
+            fixture.actual_load(fixture.path)
     assert not fixture.state.events

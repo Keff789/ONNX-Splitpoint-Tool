@@ -19,6 +19,7 @@ import pytest
 from onnx_splitpoint_tool.workflow import native_dataset_quality as workflow
 from onnx_splitpoint_tool.native_split_quality import seal_native_split_quality_binding
 from test_v269f_native_split_receipt_validation import _fixture_payload
+from test_v269f_native_split_receipt_validation import _native_row_for_binding
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +95,31 @@ def test_preparation_stages_exact_closure_and_preserves_original_selection(prepa
         assert path.stat().st_size == descriptor["size_bytes"]
     with tarfile.open(action["stage_archive"]["path"]) as archive:
         assert set(archive.getnames()) == {path.relative_to(stage).as_posix() for path in stage.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize('conflict', [False, True])
+def test_measured_native_process_local_sites_are_exact_and_child_scoped(prepared, conflict, monkeypatch):
+    from onnx_splitpoint_tool.native_command_contract import seal_native_command_contract
+    command = _native_row_for_binding(prepared.prior)['native_command_contract']
+    # This focused fixture uses the normal sealed command verifier; the full
+    # mixed H8 contract itself has separate existing Native verifier tests.
+    command['runtime_options']['process_local_extra_sites'] = ['/opt/existing_hailo/site-packages']
+    command = seal_native_command_contract(command)
+    timed = {'native_command_contract': command}
+    prepared.config['timed_fps_authority'] = _write(Path(prepared.config['timed_fps_authority']['path']), timed)
+    prepared.config['identity'].update(backend='hailo8_to_trt', runtime_precision_identity='uint8_dequant_fp16')
+    if conflict:
+        prepared.config['native']['process_local_extra_sites'] = ['/opt/different/site-packages']
+    _write(prepared.path, prepared.config)
+    monkeypatch.delenv('SPLITPOINT_EXTRA_SITES', raising=False)
+    if conflict:
+        with pytest.raises(ValueError, match='sites conflict'):
+            workflow.prepare_native_quality_action(prepared.path, **prepared.kwargs)
+    else:
+        action = workflow.prepare_native_quality_action(prepared.path, **prepared.kwargs)
+        assert action['environment'] == {'SPLITPOINT_EXTRA_SITES': '/opt/existing_hailo/site-packages'}
+        assert 'SPLITPOINT_EXTRA_SITES=/opt/existing_hailo/site-packages' in shlex.split(action['command'])
+    assert 'SPLITPOINT_EXTRA_SITES' not in os.environ
 
 
 @pytest.mark.parametrize("fault", ["wrong_setup", "missing_host", "missing_user"])

@@ -20,7 +20,7 @@ from . import native_detection_postprocess as postprocess
 from .native_output_endpoint import load_authoritative_output_contract, runtime_output_contract
 from .native_three_stage import verify_fast_completion_attestation
 from .native_dataset_quality_export import export_native_quality_request
-from .native_command_contract import canonical_json_sha256
+from .native_command_contract import canonical_json_sha256, verify_native_command_contract
 from .quality_cache import image_ids_fingerprint
 from .quality_service import _validate_detection_quality_contract
 
@@ -46,6 +46,27 @@ def checked_json(descriptor: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError('Native dataset Quality JSON object required')
     return value
+
+
+def _timed_model_identity(timed, identity):
+    """Read an absent H8 model alias only from its verified Native command."""
+    aliases = [timed.get(name) for name in ('model_id', 'model') if timed.get(name)]
+    raw = timed.get('native_command_contract')
+    if raw is not None:
+        command, status = verify_native_command_contract(raw, expected_identity={
+            'model': identity['model_id'], 'case': identity['case_id'],
+            'setup_id': identity['setup_id'], 'backend': identity['backend'],
+            'precision': identity['runtime_precision_identity'],
+        })
+        if command is None:
+            raise ValueError('Native dataset Quality timed Native command invalid: ' + status)
+        model = command['model']
+        if any(alias != model for alias in aliases):
+            raise ValueError('Native dataset Quality timed model aliases conflict')
+        return model
+    if not aliases or any(alias != aliases[0] for alias in aliases):
+        raise ValueError('Native dataset Quality timed model authority missing or conflicting')
+    return aliases[0]
 
 
 def load_capture_config(path: str | Path) -> dict[str, Any]:
@@ -100,7 +121,7 @@ def load_capture_config(path: str | Path) -> dict[str, Any]:
     # This is the original measured Native result, not a new performance run.
     timed = checked_json(config['timed_fps_authority'])
     if (str(timed.get('case') or timed.get('case_id') or '') != identity['case_id']
-            or timed.get('model_id', timed.get('model')) != identity['model_id']):
+            or _timed_model_identity(timed, identity) != identity['model_id']):
         raise ValueError('Native dataset Quality timed source case/model differs')
     if timed.get('completion_execution_contract') != config['timed_completion_contract']:
         raise ValueError('Native dataset Quality timed completion authority differs')
