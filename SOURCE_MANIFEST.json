@@ -357,7 +357,7 @@
     {
       "path": "docs/ARBEITSSTAND.md",
       "size": 555191,
-      "sha256": "f7ffcee4e5afdd6895869df472a72dff757203e93069339b1f8bcbb6952f0820"
+      "sha256": "f58fe7b899d6e54527e9ae6aaddaede98a48106f64c8cf90fa4e827ba1618c42"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -392,7 +392,7 @@
     {
       "path": "docs/GUI_ABNAHME_2.95.5_20261115.md",
       "size": 12387,
-      "sha256": "afe9ed3af86906176334353f0b1c0c5fbbb9ad32f17c9fac906a5ec549535a9d"
+      "sha256": "40ae402259f73cd411884b4e10d52447d032f505d1a8dcc9b50c13d99c0aa482"
     },
     {
       "path": "docs/HAILO10_YOLO26_DIAGNOSE_v27931.md",

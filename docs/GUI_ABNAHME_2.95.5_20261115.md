@@ -3,7 +3,7 @@
 Die korrigierte GUI wurde auf Smartmirror2 tatsächlich bedient. Der abschließende
 Softwarelauf besteht mit **149 PASS, 0 FAIL, 0 SKIP** (141,55 s; fünf
 Deprecation-Warnungen aus vorhandenen Abhängigkeiten). Die Funktionsmatrix
-enthält **248 Prüffälle: 228 PASS, 19 NOT_RUN und 1 BLOCKED**. GUI-, Callback-,
+enthält **251 Prüffälle: 231 PASS, 19 NOT_RUN und 1 BLOCKED**. GUI-, Callback-,
 CLI- und ausdrücklich ersetzte externe Aufrufe sind darin getrennt bezeichnet.
 Es gibt keine neue Hardware-, Energie- oder Herstellercompilerabnahme.
 

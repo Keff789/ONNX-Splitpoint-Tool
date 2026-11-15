@@ -29,7 +29,7 @@ Produktive Einstellungen, Profile, Originalmodelle und Caches bleiben erhalten.
 Abschließende Softwareabnahme: 149 PASS, 0 FAIL, 0 SKIP, fünf vorhandene
 Deprecation-Warnungen, 141,55 s; überwachte Produkt-/Testquellen vor/nachher
 identisch. Echte GUI-Abnahme separat: alle acht Tabs und ihre Hauptaktionen
-inventarisiert; 248 konkrete Fälle mit 228 PASS, 19 begründeten NOT_RUN und
+inventarisiert; 251 konkrete Fälle mit 231 PASS, 19 begründeten NOT_RUN und
 einer nicht visuell verifizierten externen Dateimanageransicht (BLOCKED).
 Der tatsächliche produktive `./start_gui.sh` bestand zusätzlich zwei Starts
 mit zusammenhängendem Modell-/Analyse-/Split-/ORT-/TeX-/SVG-Ablauf und
