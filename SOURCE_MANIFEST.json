@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2438,
+  "file_count": 2446,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 548573,
-      "sha256": "d831fa1ada5e0808269fc98a33e0f4aaafa62cb55829679160ea2601cc080c20"
+      "size": 555191,
+      "sha256": "f7ffcee4e5afdd6895869df472a72dff757203e93069339b1f8bcbb6952f0820"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -388,6 +388,11 @@
       "path": "docs/EVALUATION_WORKFLOW.md",
       "size": 10096,
       "sha256": "219fe5185e460786353545448dcc10f1f2293346d9949fa5cfd3d9a2179d8b9d"
+    },
+    {
+      "path": "docs/GUI_ABNAHME_2.95.5_20261115.md",
+      "size": 12387,
+      "sha256": "afe9ed3af86906176334353f0b1c0c5fbbb9ad32f17c9fac906a5ec549535a9d"
     },
     {
       "path": "docs/HAILO10_YOLO26_DIAGNOSE_v27931.md",
@@ -696,8 +701,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/analysis.py",
-      "size": 102986,
-      "sha256": "73441725c9eb6c267369af781fcb5b6107fc4d6351297fcd6d2fbfbd793c091c"
+      "size": 103431,
+      "sha256": "3c3a86eed56203d34ffa98fcc5bbcbb231fdfca435db972c22f5e22d729e95d3"
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/classification_validation_presets.py",
@@ -1031,8 +1036,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/gui/app.py",
-      "size": 469409,
-      "sha256": "4b07ec3d6c86d5bd33fe631b9e3e4c122cd6fa65e26cb16c5f58b5e841f99aaf"
+      "size": 470131,
+      "sha256": "84153fc0f52f79b24eec395635c85c2675e6407ecd08726772f1eca035f6b4e9"
     },
     {
       "path": "onnx_splitpoint_tool/gui/artifact_library_panel.py",
@@ -1041,8 +1046,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/gui/benchmark_workflow.py",
-      "size": 155589,
-      "sha256": "21f89e1e83d085a476c01dc54cfc155c9a1fa72b211a62036f2d1cd798726a28"
+      "size": 155638,
+      "sha256": "573adbd13ca90023c6cf968793f8b5b6eed4f3ad6b92cf9260b4980d47c2cdd1"
     },
     {
       "path": "onnx_splitpoint_tool/gui/controller.py",
@@ -1096,8 +1101,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_benchmark_analysis.py",
-      "size": 101384,
-      "sha256": "2c8eb426d2521fb55c40992527b87646aa073bd9ebf76e12f46ff4049742726e"
+      "size": 102694,
+      "sha256": "b88da88dfa056ea3a289e47b7d120f4f184a7e0704356a74b389c59d58adee39"
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_candidates.py",
@@ -1111,13 +1116,13 @@
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_export.py",
-      "size": 10933,
-      "sha256": "6a7886e8a9b471f9188efb61bd863fc0d9f7f154d852a3141515fd154bf08ab8"
+      "size": 12082,
+      "sha256": "7bb6dedf6fee8e2ddb2a4178a4a2a68e19c4da9081d0b5fa63944118b03a0e1f"
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_hardware.py",
-      "size": 167478,
-      "sha256": "16cb1ae1af5314a703bb24af341bbc5639ad24f05a2fd433f1ef3f6691216d0a"
+      "size": 167779,
+      "sha256": "2ea7c5e8bbc66c735603c7077a4c91e60dd1a3e8d11fe2cdbda29afe9c749ec9"
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_jobs.py",
@@ -1126,8 +1131,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_logs.py",
-      "size": 16390,
-      "sha256": "f7dbc7e96c0e58a908ae1489a59aa326e8fddfaccde2835ec7330b441490a21d"
+      "size": 18142,
+      "sha256": "2dbc2a9712eb5a1b59f7e9b4baf92aaa8f2a453231ff687adbcabab8a338d15c"
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_split_export.py",
@@ -1136,8 +1141,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_validate.py",
-      "size": 149597,
-      "sha256": "75452c90464761890e89e74bb14b2e2e58b39f05973355878a2034a84e305a45"
+      "size": 149787,
+      "sha256": "88840c7a87db83558a7ee56f402c6427ee0a1802c933c49695399857233f3c4f"
     },
     {
       "path": "onnx_splitpoint_tool/gui/panels/panel_validation.py",
@@ -1241,8 +1246,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/gui_app.py",
-      "size": 380411,
-      "sha256": "872ff26ebc70a5d5f15460ad8412b0fcea18c969e9260033751b29174fa64823"
+      "size": 381687,
+      "sha256": "86908dd086c8bbcce622dbd1134517c8af48cf358d9a2600a143d59971a2ebe6"
     },
     {
       "path": "onnx_splitpoint_tool/hailo/__init__.py",
@@ -2061,8 +2066,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/run_modes/default_run_modes.yaml",
-      "size": 20419,
-      "sha256": "65a71e6b6fc722b8fd026ef6d5d14b4acc0be73ad79385c04512efe8ada193e4"
+      "size": 20425,
+      "sha256": "9995e5c2dc9ea7a75a7c38f14b85232ba5b97eedbffdc0348cb79e45577ea92f"
     },
     {
       "path": "onnx_splitpoint_tool/resources/schemas/SCHEMA.md",
@@ -3471,8 +3476,8 @@
     },
     {
       "path": "scripts/build_source_manifest.py",
-      "size": 35400,
-      "sha256": "14be3360baeeb6a6027a8e1b7761cde08d4889ca812e1abead7cd24395ba92c3"
+      "size": 35443,
+      "sha256": "d7501d61b1d2f8f8a400c50da89db857ef2a8ab0b94d588e42df2fe9413edb67"
     },
     {
       "path": "scripts/build_source_release.py",
@@ -7950,6 +7955,36 @@
       "sha256": "8d200f1323bedb650cd2c68cfc181eb72edaa15560fdf53e57edc796dba7c112"
     },
     {
+      "path": "tests/test_gui_acceptance_analysis_exports.py",
+      "size": 15239,
+      "sha256": "526a6e9f2c69ac842064ee5d057489318b2329c0590c7896ff0e24c9ba9b418f"
+    },
+    {
+      "path": "tests/test_gui_acceptance_benchmark.py",
+      "size": 10182,
+      "sha256": "d9f68929af1b377102c790e14a0224a85dd62ec8c6e81f702184fe673dd037bd"
+    },
+    {
+      "path": "tests/test_gui_acceptance_config_jobs_logs.py",
+      "size": 8073,
+      "sha256": "9080c95519a2da7c0396f588514fc0b919a17b516d4e16f38da853dfa232b133"
+    },
+    {
+      "path": "tests/test_gui_acceptance_matrix_errors.py",
+      "size": 3732,
+      "sha256": "37409ac588b0c5c7f067bab22258cdaf1709887bc9fa1b29e4ef6e7057365e96"
+    },
+    {
+      "path": "tests/test_gui_acceptance_results.py",
+      "size": 7585,
+      "sha256": "e947613ca88e4db573c7115fd682eb8425f18a1cffc18c0b4fda0825c717a14d"
+    },
+    {
+      "path": "tests/test_gui_acceptance_workflow.py",
+      "size": 6064,
+      "sha256": "77c026daecfc304405a0e146913301d0ef571b6357dc16dd2d6a847df4c6d2fc"
+    },
+    {
       "path": "tests/test_hailo10_yolo26_full_semantic_fixture.py",
       "size": 9145,
       "sha256": "2bd6e7087e133e40045e46456f6d644a16df34d468f6b315aebe9cccb3ae370d"
@@ -7998,6 +8033,11 @@
       "path": "tests/test_holdout_audit_freeze_contract_v61e.py",
       "size": 27183,
       "sha256": "d3647464fe4bb31b8c376564f414b18e0a1bf7a03c7d80f0363b3e8db1277981"
+    },
+    {
+      "path": "tests/test_manual_split_callback.py",
+      "size": 12244,
+      "sha256": "55750603e2d8dba7ed8fa906aeeb6bb0a9f116db0628b7fd25d9a916ba17d80c"
     },
     {
       "path": "tests/test_missing_full_quality_attestation.py",

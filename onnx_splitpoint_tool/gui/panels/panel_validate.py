@@ -843,7 +843,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
                         overwrite=bool(overwrite_var.get()),
                     )
                 except Exception as exc:
-                    dlg.after(0, lambda: _finish_import(None, exc))
+                    dlg.after(0, lambda _exc=exc: _finish_import(None, _exc))
                     return
                 dlg.after(0, lambda: _finish_import(out, None))
 
@@ -966,7 +966,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
                         log=_progress,
                     )
                 except Exception as exc:
-                    dlg.after(0, lambda: _finish(None, exc))
+                    dlg.after(0, lambda _exc=exc: _finish(None, _exc))
                     return
                 dlg.after(0, lambda: _finish(result, None))
 
@@ -1976,12 +1976,14 @@ def build_panel(parent, app=None) -> ttk.Frame:
                         hide = True
                     if row == 7 and col >= 4:  # old validation default hint
                         hide = True
-                    if row >= 10 and row <= 15:  # old profile workflow/model-prep controls
+                    if row >= 10 and row <= 14:  # old profile workflow controls
                         hide = True
                     if hide:
                         child.grid_remove()
                 except Exception:
                     pass
+            # Keep the manual model-preparation section at row 15 reachable:
+            # unlike profile workflows, it has no entrypoint in the other tabs.
             # Compact note for users.
             note = ttk.Label(acc_group, text="Validation/calibration datasets and Hailo run defaults are configured in Tool Config. Evaluation profiles are configured in the Evaluation Workflow tab.", foreground="#666", wraplength=1050)
             note.grid(row=10, column=0, columnspan=11, sticky='w', padx=(8, 8), pady=(4, 8))
@@ -2927,9 +2929,9 @@ def build_panel(parent, app=None) -> ttk.Frame:
                     _w.grid_remove()
             except Exception:
                 pass
-        # Hide Evaluation-Profile campaign controls from Benchmark.  They are
-        # handled by the Evaluation Workflow tab.
-        for _row in (10, 11, 12, 13, 14, 15):
+        # Hide Evaluation-Profile campaign controls from Benchmark. They are
+        # handled by Evaluation Workflow; manual model preparation stays here.
+        for _row in (10, 11, 12, 13, 14):
             for _w in list(acc_group.grid_slaves(row=_row)):
                 try:
                     _w.grid_remove()

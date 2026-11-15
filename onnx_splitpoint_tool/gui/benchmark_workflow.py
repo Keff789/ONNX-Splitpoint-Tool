@@ -2248,7 +2248,9 @@ class BenchmarkWorkflowController:
 
         do_ctx_full = bool(getattr(app, 'var_split_ctx_full', tk.BooleanVar(value=True)).get())
         do_ctx_cutflow = bool(getattr(app, 'var_split_ctx_cutflow', tk.BooleanVar(value=False)).get())
-        ctx_hops = _safe_int(getattr(app, 'var_split_ctx_hops', tk.StringVar(value='2')).get()) or 2
+        ctx_hops = _safe_int(getattr(app, 'var_split_ctx_hops', tk.StringVar(value='2')).get())
+        if ctx_hops is None:
+            ctx_hops = 2
 
         eps_txt = (app.var_split_eps.get() or "").strip()
         eps_default = 1e-4

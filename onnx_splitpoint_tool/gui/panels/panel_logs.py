@@ -16,12 +16,14 @@ This panel therefore supports browsing multiple log files from:
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 import sys
 import logging
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Dict, List, Optional
 
 from ...log_runtime import active_log_description, discover_live_logging_paths as _discover_live_runtime_log_paths, resolve_active_log_path
@@ -162,6 +164,31 @@ def _read_tail_text(path: Path, *, max_bytes: int = 2_000_000) -> str:
             return header + txt
     except Exception as e:
         return f"[log] {path}\n\nFailed to read log file: {e}"
+
+
+def _last_error_text(text: str) -> str:
+    """Keep the last error's traceback and cause, including non-Error types."""
+    lines = text.splitlines()
+    markers = [
+        i for i, line in enumerate(lines)
+        if re.search(r"\berror\b|\bcritical\b|traceback|\w+(?:Error|Exception):", line, re.IGNORECASE)
+    ]
+    if not markers:
+        return "No error line found in the selected log."
+    marker = markers[-1]
+    # Python logging writes the complete traceback as continuation lines of
+    # the ERROR record. Filtering individual lines loses TimeoutExpired,
+    # InvalidArgument and often the failing source line.
+    record = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}.*?\b(?:DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\b")
+    start = marker
+    for i in range(marker, -1, -1):
+        if record.match(lines[i]):
+            start = i
+            break
+        if "traceback" in lines[i].lower():
+            start = i
+    end = next((i for i in range(marker + 1, len(lines)) if record.match(lines[i])), len(lines))
+    return "\n".join(lines[max(start, end - 160):end]).strip()
 
 
 def build_panel(parent, app=None) -> ttk.Frame:
@@ -318,12 +345,28 @@ def build_panel(parent, app=None) -> ttk.Frame:
         if not p or not p.exists():
             messagebox.showinfo("Logs", "No log file selected.")
             return
-        lines = _read_tail_text(p).splitlines()
-        error_lines = [ln for ln in lines if "error" in ln.lower() or "traceback" in ln.lower()]
-        text = "\n".join(error_lines[-40:]).strip() or "No error line found in the selected log."
+        text = _last_error_text(_read_tail_text(p))
         frame.clipboard_clear()
         frame.clipboard_append(text)
         messagebox.showinfo("Logs", "Last error copied to clipboard.")
+
+    def _export_selected() -> None:
+        p = _current_path()
+        if p is None:
+            messagebox.showinfo("Logs", "No log file selected.")
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=frame, title="Export selected log", initialfile=p.name,
+            defaultextension=".log", filetypes=[("Log files", "*.log"), ("All files", "*")],
+        )
+        if not destination:
+            return
+        try:
+            shutil.copy2(p, destination)
+        except Exception as exc:
+            messagebox.showerror("Logs", f"Failed to export log file:\n{p}\n\n{exc}")
+            return
+        messagebox.showinfo("Logs", f"Log exported:\n{destination}")
 
     enabled_var = getattr(app, "var_log_retention_enabled", None)
     days_var = getattr(app, "var_log_retention_days", None)
@@ -370,6 +413,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     ttk.Button(btns, text="Open", command=_open_selected).pack(side=tk.LEFT, padx=(8, 0))
     ttk.Button(btns, text="Open folder", command=_open_folder).pack(side=tk.LEFT, padx=(8, 0))
     ttk.Button(btns, text="Copy last error", command=_copy_last_error).pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Button(btns, text="Export…", command=_export_selected).pack(side=tk.LEFT, padx=(8, 0))
 
     ret = ttk.Frame(actions)
     ret.pack(side=tk.RIGHT)

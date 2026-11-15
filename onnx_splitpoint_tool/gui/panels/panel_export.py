@@ -38,10 +38,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
     if app is not None:
         vars_map["runner"] = getattr(app, "var_split_runner", vars_map["runner"])
 
-    ttk.Checkbutton(checks, text="Models", variable=vars_map["models"]).pack(side=tk.LEFT, padx=(8, 10), pady=8)
+    ttk.Checkbutton(checks, text="Models", variable=vars_map["models"], state="disabled").pack(side=tk.LEFT, padx=(8, 10), pady=8)
     ttk.Checkbutton(checks, text="Runner", variable=vars_map["runner"]).pack(side=tk.LEFT, padx=(0, 10), pady=8)
-    ttk.Checkbutton(checks, text="Context", variable=vars_map["context"]).pack(side=tk.LEFT, padx=(0, 10), pady=8)
-    ttk.Checkbutton(checks, text="Reports", variable=vars_map["reports"]).pack(side=tk.LEFT, padx=(0, 10), pady=8)
+    ttk.Checkbutton(checks, text="Context", variable=vars_map["context"], state="disabled").pack(side=tk.LEFT, padx=(0, 10), pady=8)
+    ttk.Checkbutton(checks, text="Reports", variable=vars_map["reports"], state="disabled").pack(side=tk.LEFT, padx=(0, 10), pady=8)
 
     context_group = ttk.LabelFrame(frame, text="Context export")
     context_group.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 8))
@@ -50,8 +50,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_ctx_cutflow = getattr(app, "var_split_ctx_cutflow", tk.BooleanVar(value=True)) if app is not None else tk.BooleanVar(value=True)
     var_ctx_hops = getattr(app, "var_split_ctx_hops", tk.StringVar(value="2")) if app is not None else tk.StringVar(value="2")
 
-    ttk.Checkbutton(context_group, text="Full", variable=var_ctx_full).pack(side=tk.LEFT, padx=(8, 10), pady=8)
-    ttk.Checkbutton(context_group, text="Cut-flow", variable=var_ctx_cutflow).pack(side=tk.LEFT, padx=(0, 10), pady=8)
+    chk_ctx_full = ttk.Checkbutton(context_group, text="Full", variable=var_ctx_full)
+    chk_ctx_full.pack(side=tk.LEFT, padx=(8, 10), pady=8)
+    chk_ctx_cutflow = ttk.Checkbutton(context_group, text="Cut-flow", variable=var_ctx_cutflow)
+    chk_ctx_cutflow.pack(side=tk.LEFT, padx=(0, 10), pady=8)
     ttk.Label(context_group, text="hops:").pack(side=tk.LEFT, padx=(4, 4))
     ttk.Combobox(
         context_group,
@@ -65,6 +67,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
     split_output_group.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 8))
     var_split_folder = getattr(app, "var_split_folder", tk.BooleanVar(value=True)) if app is not None else tk.BooleanVar(value=True)
     ttk.Checkbutton(split_output_group, text="Export as folder", variable=var_split_folder).pack(side=tk.LEFT, padx=8, pady=8)
+    ttk.Label(split_output_group, text="Models and manifest are always included. Folder exports include both context views.").pack(side=tk.LEFT, padx=8)
+
+    def _update_context_options(*_args) -> None:
+        state = "disabled" if var_split_folder.get() else "normal"
+        chk_ctx_full.configure(state=state)
+        chk_ctx_cutflow.configure(state=state)
+
+    var_split_folder.trace_add("write", _update_context_options)
+    _update_context_options()
 
     # Backend accelerator artefact builds moved out of this export tab.
     # Keep the legacy Tk variables initialized because existing generation code
@@ -134,7 +145,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     lbl_graphviz.grid(row=4, column=0, sticky="w", padx=12, pady=(0, 8))
 
     def _update_graphviz_status(*_args) -> None:
-        need_graphviz = bool(var_ctx_full.get() or var_ctx_cutflow.get())
+        need_graphviz = bool(var_ctx_full.get() or var_ctx_cutflow.get() or var_split_folder.get())
         has_graphviz = shutil.which("dot") is not None
         if need_graphviz and not has_graphviz:
             graphviz_status.set("Warning: Graphviz 'dot' not found. DOT files can be written, but PDF/SVG rendering is unavailable.")
@@ -143,7 +154,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         else:
             graphviz_status.set("")
 
-    for v in (var_ctx_full, var_ctx_cutflow):
+    for v in (var_ctx_full, var_ctx_cutflow, var_split_folder):
         v.trace_add("write", _update_graphviz_status)
     _update_graphviz_status()
 
@@ -170,7 +181,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     def _render_preview(*_args) -> None:
         # app.model_path can be None during early startup (before a model is opened).
-        mp = getattr(app, "model_path", None) if app is not None else None
+        mp = (getattr(getattr(app, "gui_state", None), "current_model_path", None)
+              or getattr(app, "model_path", None)) if app is not None else None
         if mp:
             model_path = Path(mp)
             base = model_path.stem or "model"
@@ -191,10 +203,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
         est = 0.0
         lines = [f"{out_dir}/"]
         if vars_map["models"].get():
-            lines += [f"  - {base}_part1_{b_tag}.onnx", f"  - {base}_part2_{b_tag}.onnx"]
+            lines += [f"  - {base}.onnx (full model copy)", f"  - {base}_part1_{b_tag}.onnx", f"  - {base}_part2_{b_tag}.onnx"]
             # rough estimate: assume similar size to original model
             try:
-                est += float(model_path.stat().st_size)
+                est += 2 * float(model_path.stat().st_size)
             except Exception:
                 est += 120 * 1024 * 1024
         if vars_map["runner"].get():
@@ -205,9 +217,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
         # They are created by Benchmark/Evaluation workflows from target profiles.
 
         if vars_map["context"].get():
-            if bool(var_ctx_full.get()):
+            full = bool(var_ctx_full.get()) or bool(var_split_folder.get())
+            cutflow = bool(var_ctx_cutflow.get()) or bool(var_split_folder.get())
+            if not full and not cutflow:
+                cutflow = True  # The manual exporter retains at least one context.
+            if full:
                 lines += [f"  - split_context_{b_tag}{ctx_formats}"]
-            if bool(var_ctx_cutflow.get()):
+            if cutflow:
                 lines += [f"  - split_context_{b_tag}_cutflow{ctx_formats}"]
                 # Not part of filenames, but affects what is included.
                 lines += [f"    (cut-flow hops={var_ctx_hops.get()})"]
@@ -217,7 +233,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
             lines += ["  - split_manifest.json"]
             do_validate = bool(getattr(app, "var_split_validate", tk.BooleanVar(value=False)).get()) if app is not None else False
             if do_validate:
-                lines += ["  - validation_report.json"]
+                lines += ["  - validation_core.json"]
             est += 128 * 1024
 
         lines += ["", f"Estimated size: ~{_human_size(est)}"]
@@ -240,8 +256,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_hef_h8_arch,
         var_hef_h10_en,
         var_hef_h10_arch,
+        getattr(app, "var_split_validate", None),
     ):
-        v.trace_add("write", _render_preview)
+        if v is not None:
+            v.trace_add("write", _render_preview)
     _render_preview()
 
     # Keep preview in sync with boundary selection changes.
@@ -249,6 +267,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     if app is not None and hasattr(app, "events"):
         try:
             app.events.on_candidate_selected(lambda _b: _render_preview())
+            app.events.on_model_loaded(lambda _model: _render_preview())
         except Exception:
             # Never let preview wiring break the UI.
             pass

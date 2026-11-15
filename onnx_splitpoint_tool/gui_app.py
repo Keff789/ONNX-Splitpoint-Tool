@@ -6260,6 +6260,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         if self.analysis is None or model_path is None:
             messagebox.showinfo("Nothing to split", "Load a model and run an analysis first.")
             return
+        # Keep every model-dependent worker operation bound to this selection.
+        full_model_src_for_worker = os.path.abspath(str(model_path))
 
         b = self._selected_boundary_index()
         if b is None:
@@ -6281,6 +6283,20 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         if not cut_tensors:
             messagebox.showinfo("No cut", "Selected boundary produced no cut tensors (unexpected).")
+            return
+
+        # Validate edited parameters before prompting for or creating an export.
+        try:
+            _params_for_split = self._read_params()
+            prune_skip_block = bool(getattr(_params_for_split, "prune_skip_block", False))
+            skip_min_span = int(getattr(_params_for_split, "skip_min_span", 0) or 0)
+            if skip_min_span < 0:
+                raise ValueError("Min skip span must be an integer ≥ 0.")
+            skip_allow_last_n = int(getattr(_params_for_split, "skip_allow_last_n", 0) or 0)
+            if skip_allow_last_n < 0:
+                raise ValueError("Allow last N inside must be an integer ≥ 0.")
+        except ValueError as exc:
+            messagebox.showerror("Invalid parameters", str(exc))
             return
 
         # If there is exactly one activation crossing, allow optional rename for stricter cut.
@@ -6329,7 +6345,11 @@ class SplitPointAnalyserGUI(tk.Tk):
             out_dir = os.path.join(out_parent, f"{base}_split_b{b}")
         else:
             out_dir = out_parent
-        os.makedirs(out_dir, exist_ok=True)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror("Export failed", f"Could not create export directory:\n{out_dir}\n\n{type(exc).__name__}: {exc}")
+            return
 
         p1_path = os.path.join(out_dir, f"{base}_part1_b{b}.onnx")
         p2_path = os.path.join(out_dir, f"{base}_part2_b{b}.onnx")
@@ -6337,15 +6357,6 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         strict_boundary = bool(self.var_strict_boundary.get())
 
-        # Read pruning params from the current GUI state (same source as Analyse).
-        _params_for_split = self._read_params()
-        prune_skip_block = bool(getattr(_params_for_split, "prune_skip_block", False))
-        skip_min_span = int(getattr(_params_for_split, "skip_min_span", 0) or 0)
-        if skip_min_span < 0:
-            raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = int(getattr(_params_for_split, "skip_allow_last_n", 0) or 0)
-        if skip_allow_last_n < 0:
-            raise ValueError("Allow last N inside must be an integer ≥ 0.")
         do_validate = bool(self.var_split_validate.get())
         do_runner = bool(self.var_split_runner.get())
         runner_target = str(self.var_runner_target.get() or "auto")
@@ -6363,7 +6374,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         do_ctx_full = do_ctx_full_user or export_as_folder
         do_ctx_cutflow = do_ctx_cutflow_user or export_as_folder
 
-        ctx_hops = _safe_int(getattr(self, 'var_split_ctx_hops', tk.StringVar(value='2')).get()) or 2
+        ctx_hops = _safe_int(getattr(self, 'var_split_ctx_hops', tk.StringVar(value='2')).get())
+        if ctx_hops is None:
+            ctx_hops = 2
 
 
         eps_txt = (self.var_split_eps.get() or "").strip()
@@ -6379,12 +6392,8 @@ class SplitPointAnalyserGUI(tk.Tk):
                 return
 
         # Read batch override once here (avoid reading Tk variables from worker thread).
-        params = None
-        try:
-            params = self._read_params()
-            batch_override = params.batch_override
-        except Exception:
-            batch_override = None
+        params = _params_for_split
+        batch_override = getattr(params, "batch_override", None)
 
         # -------- Hailo HEF generation (optional) --------
         hef_full = bool(getattr(self, "var_hailo_hef_full", tk.BooleanVar(value=False)).get())
@@ -6416,6 +6425,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         hailo_image_task = ""
         if hef_targets and (hef_full or hef_part1 or hef_part2):
+            hef_timeout_s = int(self._hailo_hef_timeout_seconds())
             try:
                 hailo_image_task = _declared_hailo_image_task(
                     model_path, model, self.analysis if isinstance(self.analysis, Mapping) else None
@@ -6478,6 +6488,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         def worker() -> None:
             try:
                 msg = []
+                export_errors = []
 
                 q.put(("stage", f"Splitting boundary {b} and exporting artifacts…"))
 
@@ -6498,7 +6509,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     actions.update(
                         asc.ensure_external_data_files(
                             p1,
-                            source_model_path=self.model_path,
+                            source_model_path=full_model_src_for_worker,
                             dest_dir=out_dir,
                             mode="auto",
                         )
@@ -6506,7 +6517,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     actions.update(
                         asc.ensure_external_data_files(
                             p2,
-                            source_model_path=self.model_path,
+                            source_model_path=full_model_src_for_worker,
                             dest_dir=out_dir,
                             mode="auto",
                         )
@@ -6669,7 +6680,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                             basename=f"split_context_b{b}",
                             render=True,
                             hops=int(ctx_hops),
-                            strict_boundary=bool(self.var_strict_boundary.get()),
+                            strict_boundary=strict_boundary,
                             include_external_inputs=(not llm_style),
                             semantic_label=semantic_label,
                             value_bytes_map=value_bytes_map,
@@ -6682,6 +6693,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     msg.append(f"Wrote: {os.path.join(out_dir, ctx[k])}")
                     except Exception as e:
                         msg.append(f"Split context export (full) failed: {e}")
+                        export_errors.append(f"Split context export (full): {type(e).__name__}: {e}")
 
                 if do_ctx_cutflow:
                     try:
@@ -6694,7 +6706,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                             basename=f"split_context_b{b}_cutflow",
                             render=True,
                             hops=int(ctx_hops),
-                            strict_boundary=bool(self.var_strict_boundary.get()),
+                            strict_boundary=strict_boundary,
                             cut_flow_only=True,
                             include_internal_consumers=False,
                             include_external_inputs=False,
@@ -6709,6 +6721,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     msg.append(f"Wrote: {os.path.join(out_dir, ctx_cf[k])}")
                     except Exception as e:
                         msg.append(f"Split context export (cut-flow) failed: {e}")
+                        export_errors.append(f"Split context export (cut-flow): {type(e).__name__}: {e}")
 
 
                 # Runner skeleton
@@ -6723,12 +6736,13 @@ class SplitPointAnalyserGUI(tk.Tk):
                         msg.append(f"Runner skeleton ({runner_target}): {runner_path}")
                     except Exception as e:
                         msg.append(f"Runner skeleton failed: {e}")
+                        export_errors.append(f"Runner skeleton: {type(e).__name__}: {e}")
 
                 # Optional ORT validation (quick numeric check, no timing report)
                 if do_validate:
                     try:
                         res = asc.validate_split_onnxruntime(
-                            full_model_path=os.path.abspath(self.model_path),
+                            full_model_path=full_model_src_for_worker,
                             part1_path=os.path.abspath(p1_path),
                             part2_path=os.path.abspath(p2_path),
                             manifest=manifest_out,
@@ -6740,11 +6754,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                         try:
                             write_benchmark_json_atomic(Path(val_path), res)
                             msg.append(f"Wrote: {val_path}")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            export_errors.append(f"Validation report: {type(e).__name__}: {e}")
                         msg.append(f"ORT validation: {'PASS' if ok else 'FAIL'}")
                     except Exception as e:
                         msg.append(f"ORT validation failed: {e}")
+                        export_errors.append(f"ORT validation: {type(e).__name__}: {e}")
+
+                if export_errors:
+                    raise RuntimeError("Selected export artifacts failed:\n" + "\n".join(export_errors))
 
                 # Optional: Build Hailo HEFs (full / part1 / part2) for selected targets.
                 if hef_targets and (hef_full or hef_part1 or hef_part2):
@@ -7985,8 +8003,9 @@ class SplitPointAnalyserGUI(tk.Tk):
             messagebox.showinfo("Nothing to export", "Run an analysis first.")
             return
 
+        model_path = self.gui_state.current_model_path or self.model_path
         default_name = "split_candidates.tex"
-        if self.model_path:
+        if model_path:
             base = os.path.splitext(os.path.basename(model_path))[0]
             default_name = f"split_candidates_{_label_sanitize(base)}.tex"
 
@@ -8008,7 +8027,8 @@ class SplitPointAnalyserGUI(tk.Tk):
             messagebox.showerror("Export failed", f"{type(e).__name__}: {e}")
 
     def _make_tex_table(self, a: Dict, picks: List[int]) -> str:
-        model_name = os.path.splitext(os.path.basename(self.model_path or "model"))[0]
+        model_path = self.gui_state.current_model_path or self.model_path
+        model_name = os.path.splitext(os.path.basename(model_path or "model"))[0]
         model_name_tex = _latex_escape(model_name)
         label = f"tab:split_candidates_{_label_sanitize(model_name)}"
 

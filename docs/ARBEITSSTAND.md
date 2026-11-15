@@ -1,3 +1,101 @@
+## 15.11.2026 — Systematische GUI-Abnahme unter unveränderter Version 2.95.5
+
+Lieferung auf aktuellem `origin/main` (`6f0d8f26d6f1426000e78f72afedeae6a722298a`)
+in separatem Worktree vorbereitet; der produktive Checkout enthält weiterhin
+unveröffentlichte MCP-Arbeit. Diese wird erhalten und nicht ungeprüft mitgeliefert.
+Paket/GUI 2.95.5 und BUILD_ID v2.95.5 bleiben unverändert.
+
+Der vorherige manuelle Split-Fix und seine sieben Regressionen sind übernommen.
+Arbeitspaket Analyse/Export: undefinierten TeX-Modellpfad, ungültige Splitparameter,
+belegte Exportziele, ignorierte Kontexttiefe 0 und irreführende Vorschau korrigiert.
+Fehler ausgewählter Kontext-/Runner-/Validierungsdateien ergeben keinen
+Erfolgsabschluss und kein neues Manifest. Reale MobileNet-/YOLOv7-Splits und
+deren ONNX-/Manifest-/Grafik-/CPU-Paritätsprüfungen bestanden.
+
+Arbeitspaket Workflow/Benchmark: drei YAML-Einrückungen repariert, manuelle
+Modellvorbereitung wieder erreichbar und gegen Doppelstart geschützt;
+verzögerte Dataset-/Matrix-/Energiefehler behalten ihre Ursache. Generate/Resume
+und Abbruch eigener lokaler Jobs bestanden. Ein erzeugter regulärer CPU-Runner
+lief zusätzlich als ausdrücklich separater CLI-Test; seine Ergebnisse wurden
+real in der GUI dargestellt und exportiert. Leere Results-Elternverzeichnisse
+werden vor Öffnen/Debug-Pack-Erzeugung korrekt abgewiesen.
+
+Arbeitspaket Ergebnisse/Bedienung: fehlenden Decision-Import, große CSV-Felder
+und Subplot-Callback-Lebensdauer korrigiert. Jobabbruch ist idempotent;
+fehlgeschlagene Hardwarekonfiguration verhindert Test-/Energy-Dispatch.
+Logkopie erhält den vollständigen Fehlerkontext, Logexport ist regulär bedienbar.
+Produktive Einstellungen, Profile, Originalmodelle und Caches bleiben erhalten.
+
+Abschließende Softwareabnahme: 149 PASS, 0 FAIL, 0 SKIP, fünf vorhandene
+Deprecation-Warnungen, 141,55 s; überwachte Produkt-/Testquellen vor/nachher
+identisch. Echte GUI-Abnahme separat: alle acht Tabs und ihre Hauptaktionen
+inventarisiert; 248 konkrete Fälle mit 228 PASS, 19 begründeten NOT_RUN und
+einer nicht visuell verifizierten externen Dateimanageransicht (BLOCKED).
+Der tatsächliche produktive `./start_gui.sh` bestand zusätzlich zwei Starts
+mit zusammenhängendem Modell-/Analyse-/Split-/ORT-/TeX-/SVG-Ablauf und
+persistierten Testeinstellungen nach Neustart. Keine finalen Tk-Ausnahmen.
+Zehn installierte Produktdateien sind bytegleich zur geprüften Lieferung.
+Hardware, Herstellerkompilierungen und Messungen blieben ausgeschaltet;
+kontrollierte Ersatzantworten sind ausdrücklich von realen Aufrufen getrennt.
+Historische Fixture-/Versions-/Energiepolicy-Testfehler bleiben dokumentiert,
+ohne alte Regeln für einen PASS umzuschreiben.
+[Datierter Abnahmebericht](GUI_ABNAHME_2.95.5_20261115.md).
+Testbelege liegen außerhalb des Quellbaums unter
+`/home/kmika/Reports/gui_gesamttest_2955_20261115`.
+
+## 15.11.2026 — Manueller GUI-Split und reale YOLOv7-Grenztensoransichten
+
+Arbeitspaket GUI-Reparatur: Der normale manuelle Callback erfasst die gewählte
+Modellquelle vor seinem Worker aus `gui_state.current_model_path` mit dem
+bisherigen Fallback. Externe Gewichte, Vollmodellkopie, Manifest und lokale
+ORT-Validierung verwenden denselben absoluten Pfad. Die beiden zuvor fehlenden
+Worker-Werte `full_model_src_for_worker` und `hef_timeout_s` sind gebunden;
+der vorhandene Hailo-Timeout wird nur bei tatsächlich angefordertem Build auf
+dem GUI-Thread gelesen. Auch die Kontextgrafiken verwenden den bereits erfassten
+Strict-Boundary-Wert. Keine Änderung an Schnittberechnung oder Backends.
+
+Die produktive GUI-Umgebung lädt Version 2.95.5 als Editable-Installation direkt
+aus diesem Checkout. Quellübernahme erfolgt durch einen neuen GUI-Prozess.
+Softwareabnahme: Sieben neue Callback-Regressionen bestanden (2,94 s, zwei
+bestehende Deprecation-Warnungen). Ein/zwei Grenztensoren, ausgewählte/alte und
+vor Workerstart gewechselte Modellpfade, Fallback, echte externe Gewichte,
+vollständige Exporte sowie sechs ersetzte Hailo-Aufrufe sind abgedeckt. Der
+unveränderte HEAD-Callback reproduziert zweimal den ursprünglichen
+`full_model_src_for_worker`-NameError; mit ausschließlich injiziertem
+Quellsnapshot reproduziert der Hailo-Test den `hef_timeout_s`-NameError. Der
+bestehende Test zur tatsächlichen Part-2-Eingangszahl bestand zusätzlich
+(1 Test, 1,86 s). Diese kontrollierten Tests sind keine echte GUI-Abnahme.
+Reale normale GUI-Abnahme bestanden: sichtbare Tk-GUI auf SM2, normaler
+Programmeinstieg, echtes Modellladen/Analysieren, Tabellenwahl und echte
+Dateidialoge. Die Bedienung wurde über die tatsächlichen Widgets automatisiert;
+Callback, Worker, Analyse, Splitter, Renderer und ORT blieben unverändert.
+`Split selected…` exportierte b043/b044/b066 vollständig; `Export context…`
+exportierte b044 zusätzlich in sein eigenes gewähltes Verzeichnis. Vier
+kanonische Exporte mit je 21 Dateien, allen Manifest-/Kontextdateien und jeweils
+CPU-Parität für `output`, `clone_1`, `clone_2` (max_abs und mean_abs exakt 0).
+Unabhängige Dateiprüfung: vier bytegleiche Vollmodellkopien, acht gültige
+ONNX-Teilmodelle, vollständige Cut-/Suffix-Eingangszuordnung und lesbare
+DOT/PDF/SVG. Die GUI-Benutzereinstellungen blieben bytegleich.
+Mehrere GUI-Sitzungen waren wegen korrigierter externer Dialogautomatisierung
+nötig; zusätzliche ursprüngliche Export-/Automatisierungsbelege bleiben erhalten.
+
+Arbeitspaket Grafiken abgeschlossen: alle drei realen Grenzen stimmen mit
+dem Originalmodell und archiviertem Ranking überein. b043 vor Concat:
+`mul_11`/`mul_13`, je [1,128,80,80] FLOAT, insgesamt 6.553.600 Bytes; b044 danach:
+`cat_1`, [1,256,80,80] FLOAT, gleiche Gesamtgröße; b066: `mul_20`,
+[1,512,80,80] FLOAT, 13.107.200 Bytes. Alle direkten Verbraucher bleiben
+sichtbar, ein Fan-out vervielfacht keinen Tensor. Neuer gemeinsamer Dreier- und
+Zweierexport sowie drei Einzelansichten liegen als PDF/SVG mit DOT/PNG und
+reproduzierbarem Exportskript vor. Geometrieprüfung aller fünf Ansichten und
+unabhängige visuelle PDF-/SVG-Prüfung bei 150 mm Breite bestanden (9/11 pt,
+keine Textkollisionen oder Beschnitte). Originalmodell/Archivdaten wurden
+wiederverwendet; passende vollständige alte Kontextgrafiken fehlten.
+Das Originalmodell `/home/kmika/Models/yolov7_paper.onnx` und archivierte
+Analysen wurden gefunden. Neue Lauf-/Grafik-/Testbelege liegen außerhalb des
+Quellbaums unter `/home/kmika/Downloads/Grenztensor_Grafiken_20261115`.
+Keine Hardware, Herstellerkompilierung, Energie- oder Qualitätskampagne.
+Bestehende MCP-Änderungen bleiben erhalten; kein Commit oder Push.
+
 ## 26.10.2026 — Gebundene ungenutzte Backendmetadaten beim H8-Import
 
 Der reale H8-Import eines bereits gemessenen Schnitts enthielt keinen neueren

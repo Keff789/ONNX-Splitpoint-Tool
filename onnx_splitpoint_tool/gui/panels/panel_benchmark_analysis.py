@@ -38,6 +38,7 @@ from ...benchmark.decision_summary import (
     build_decision_summary_figures,
     build_decision_summary_markdown,
     decision_candidate_rows,
+    decision_overview,
     decision_provider_rows,
     export_decision_summary,
 )
@@ -1715,6 +1716,24 @@ def build_panel(parent, app=None) -> ttk.Frame:
     def _render_plot(host: ttk.Frame, key: str, figure: Figure) -> None:
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
+        class AnalysisToolbar(NavigationToolbar2Tk):
+            def configure_subplots(self, *args):
+                before = set(self.canvas.callbacks.callbacks.get("close_event", {}))
+                result = super().configure_subplots(*args)
+                added = set(self.canvas.callbacks.callbacks.get("close_event", {})) - before
+                tool = getattr(self, "subplot_tool", None)
+                if tool is not None and added:
+                    # Matplotlib connects the parent canvas to the subplot
+                    # window's manager.  Once that child closes, release its
+                    # parent callback before a later result rerender closes
+                    # the old canvas and tries to destroy the child again.
+                    def _release_subplot_parent_callbacks(_event):
+                        for callback_id in added:
+                            self.canvas.mpl_disconnect(callback_id)
+
+                    tool.figure.canvas.mpl_connect("close_event", _release_subplot_parent_callbacks)
+                return result
+
         old_canvas = state["canvases"].get(key)
         if old_canvas is not None:
             try:
@@ -1730,7 +1749,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         canvas = FigureCanvasTkAgg(figure, master=host)
         widget = canvas.get_tk_widget()
         widget.grid(row=0, column=0, sticky="nsew")
-        toolbar = NavigationToolbar2Tk(canvas, host, pack_toolbar=False)
+        toolbar = AnalysisToolbar(canvas, host, pack_toolbar=False)
         toolbar.update()
         toolbar.grid(row=1, column=0, sticky="ew")
         canvas.draw_idle()
@@ -1881,8 +1900,11 @@ def build_panel(parent, app=None) -> ttk.Frame:
                     frame.after(0, lambda: _clear_comparison_views())
             except Exception as exc:
                 logger.exception("Benchmark analysis failed")
-                frame.after(0, lambda: messagebox.showerror("Benchmark-Analyse", str(exc)))
-                frame.after(0, lambda: status_var.set(f"Analyse fehlgeschlagen: {exc}"))
+                # Exception targets are cleared when the except block ends.
+                # Preserve the diagnostic before Tk executes these callbacks.
+                error_message = str(exc)
+                frame.after(0, lambda msg=error_message: messagebox.showerror("Benchmark-Analyse", msg))
+                frame.after(0, lambda msg=error_message: status_var.set(f"Analyse fehlgeschlagen: {msg}"))
             finally:
                 frame.after(0, lambda: btn_analyze.configure(state="normal"))
 

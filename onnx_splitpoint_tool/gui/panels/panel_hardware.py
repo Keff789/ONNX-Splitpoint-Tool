@@ -2384,11 +2384,14 @@ def build_panel(parent, app=None) -> ttk.Frame:
         actions.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(2, 8))
         ttk.Label(actions, textvariable=status_var, foreground="#555").pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        def _save() -> None:
+        def _save() -> bool:
             if app is None or not hasattr(app, "_hardware_registry_load"):
                 status_var.set("No app registry API")
-                return
+                return False
             try:
+                host_port = int(str(port_var.get() or "22").strip() or 22)
+                if not 1 <= host_port <= 65535:
+                    raise ValueError("SSH port must be between 1 and 65535")
                 reg = app._hardware_registry_load()
                 setups = list(reg.get("hardware_setups") or [])
                 found = None
@@ -2410,7 +2413,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
                     accelerator=accelerator,
                     host_address=str(host_var.get() or "").strip(),
                     host_user=str(user_var.get() or "nx").strip() or "nx",
-                    host_port=int(str(port_var.get() or "22").strip() or 22),
+                    host_port=host_port,
                     remote_base_dir=(
                         str(base_var.get() or "~/splitpoint_runs").strip()
                         or "~/splitpoint_runs"
@@ -2433,6 +2436,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
                 if hasattr(app, "_sync_remote_hosts_from_hardware_setups"):
                     app._sync_remote_hosts_from_hardware_setups()
                 status_var.set("saved")
+                return True
             except Exception as exc:
                 # A platform calibration may have committed between this
                 # card's full-registry load and save.  The central CAS writer
@@ -2503,12 +2507,14 @@ def build_panel(parent, app=None) -> ttk.Frame:
                         )
                     except Exception:
                         pass
-                    return
-                status_var.set(f"save failed: {type(exc).__name__}")
+                    return False
+                status_var.set(f"save failed: {type(exc).__name__}: {exc}")
+                return False
 
         ttk.Button(actions, text="Save", command=_save).pack(side=tk.RIGHT, padx=(4, 0))
         def _test() -> None:
-            _save()
+            if not _save():
+                return
             if app is not None and hasattr(app, "_test_hardware_setup_async"):
                 try:
                     status_var.set("testing…")
@@ -2520,7 +2526,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
         btn_test_setup = ttk.Button(actions, text="Test", command=_test)
         btn_test_setup.pack(side=tk.RIGHT, padx=(4, 0))
         def _test_energy() -> None:
-            _save()
+            if not _save():
+                return
             try:
                 script = Path.cwd() / "scripts" / "check_energy_setup.py"
                 try:

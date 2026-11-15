@@ -14,6 +14,7 @@ import json
 import math
 import re
 import shutil
+import sys
 import tarfile
 import zipfile
 from dataclasses import dataclass, field
@@ -430,10 +431,18 @@ def _read_json(path: Path) -> Any:
 
 def _read_csv_rows(path: Path) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
-    with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append(dict(row))
+    # Canonical benchmark rows can contain large quoted JSON evidence.  Match
+    # the existing workflow reader/audit limit instead of the 128 KiB default,
+    # and restore this process-global setting even when reading fails.
+    previous_limit = csv.field_size_limit()
+    try:
+        csv.field_size_limit(max(previous_limit, min(sys.maxsize, 2**31 - 1)))
+        with path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(dict(row))
+    finally:
+        csv.field_size_limit(previous_limit)
     return rows
 
 

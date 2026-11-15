@@ -71,6 +71,7 @@ from ..benchmark.model_preparation import (
     preparation_result_is_selected_model,
 )
 from .widgets.text_progress_dialog import TextProgressDialog
+from .widgets.diagnostic_dialog import show_diagnostic_dialog
 from .profile_editor import open_evaluation_profile_editor
 
 __version__ = TOOL_VERSION
@@ -746,7 +747,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         record = self._background_jobs.get(str(job_id))
         if record is None:
             return
-        if str(record.status or "").strip().lower() not in {"queued", "running", "cancelling"}:
+        if str(record.status or "").strip().lower() not in {"queued", "running"}:
             return
         if not bool(record.can_cancel) or not callable(record.cancel_callback):
             messagebox.showinfo("Cancel job", "This job cannot be cancelled from the GUI.")
@@ -768,6 +769,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             self._jobs_refresh_views()
             return
         record.status = "cancelling"
+        record.can_cancel = False
         record.status_text = self._jobs_status_label("cancelling")
         record.last_message = "Cancel requested…"
         if record.monitor is not None and bool(getattr(record.monitor, "alive", False)):
@@ -2361,7 +2363,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                     severity="success" if ok else "error",
                 ))
             except Exception as exc:
-                self.root.after(0, lambda: show_diagnostic_dialog(self.root, title="Energy tools check", heading="FAIL: energy tool check crashed", summary=f"{type(exc).__name__}: {exc}", details=repr(exc), severity="error"))
+                self.root.after(0, lambda exc=exc: show_diagnostic_dialog(self.root, title="Energy tools check", heading="FAIL: energy tool check crashed", summary=f"{type(exc).__name__}: {exc}", details=repr(exc), severity="error"))
         threading.Thread(target=_worker, name="energy-tools-check", daemon=True).start()
 
     def _energy_test_setup_async(self, setup_id: str, status_var=None) -> None:
@@ -2397,7 +2399,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 self.root.after(0, lambda: show_diagnostic_dialog(self.root, title=f"Energy setup test — {sid}", heading=("SUCCESS" if ok else "FAIL") + f": {sid}", summary=summary, details=details, severity="success" if ok else "error"))
             except Exception as exc:
                 _set_status("energy FAIL")
-                self.root.after(0, lambda: show_diagnostic_dialog(self.root, title=f"Energy setup test — {sid}", heading=f"FAIL: {sid}", summary=f"{type(exc).__name__}: {exc}", details=repr(exc), severity="error"))
+                self.root.after(0, lambda exc=exc: show_diagnostic_dialog(self.root, title=f"Energy setup test — {sid}", heading=f"FAIL: {sid}", summary=f"{type(exc).__name__}: {exc}", details=repr(exc), severity="error"))
         threading.Thread(target=_worker, name=f"energy-test-{sid}", daemon=True).start()
 
     def _test_energy_setups_for_current_suite(self) -> None:
@@ -6159,9 +6161,9 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                             messagebox.showerror("Remote benchmark", f"Hardware matrix run failed.\n\n{message}")
                     self.root.after(0, _show)
             except Exception as exc:
-                self.root.after(0, lambda: self._jobs_finish(job_id, status="error", message=f"{type(exc).__name__}: {exc}"))
+                self.root.after(0, lambda exc=exc: self._jobs_finish(job_id, status="error", message=f"{type(exc).__name__}: {exc}"))
                 if show_result_dialogs:
-                    self.root.after(0, lambda: messagebox.showerror("Remote benchmark", f"Hardware matrix run failed:\n\n{type(exc).__name__}: {exc}"))
+                    self.root.after(0, lambda exc=exc: messagebox.showerror("Remote benchmark", f"Hardware matrix run failed:\n\n{type(exc).__name__}: {exc}"))
             finally:
                 self._set_background_job_active("remote_run", False)
 
@@ -6666,6 +6668,13 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         prep_mode = normalize_model_preparation_mode(prep_mode_raw)
         if prep_mode == 'current':
             messagebox.showinfo('Model preparation', 'Preparation mode is set to "Use current ONNX". Nothing to prepare.')
+            return None
+        if any(
+            record.kind == 'prepare_model'
+            and str(record.status or '').lower() in {'queued', 'running', 'cancelling'}
+            for record in self._background_jobs.values()
+        ):
+            messagebox.showinfo('Model preparation', 'A model preparation job is already running. See Jobs for progress.')
             return None
         export_meta = load_export_metadata_for_model(model_path)
         try:
@@ -7879,7 +7888,11 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         )
 
     def _evaluation_workflow_open_results_folder(self) -> None:
-        self._open_path(str(self._evaluation_workflow_last_run_dir()))
+        run_dir = self._evaluation_workflow_last_run_dir()
+        if not is_evaluation_run_dir(run_dir, purpose="debug"):
+            messagebox.showinfo("Evaluation Workflow", self._evaluation_workflow_no_run_message(run_dir))
+            return
+        self._open_path(str(run_dir))
 
     def _evaluation_workflow_open_manifest(self) -> None:
         run_dir = self._evaluation_workflow_last_run_dir()
@@ -7952,7 +7965,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             prefer_latest=True,
             purpose="debug",
         )
-        if not run_dir.is_dir():
+        if not is_evaluation_run_dir(run_dir, purpose="debug"):
             messagebox.showinfo(
                 "Evaluation Workflow",
                 self._evaluation_workflow_no_run_message(run_dir),
